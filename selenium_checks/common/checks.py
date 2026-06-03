@@ -45,11 +45,40 @@ def hide_dynamic_elements(driver):
                 .spr-badge,
                 #size_error,
                 .alr-wh-rw-popup,
-                .cbb-frequently-bought-container {
+                .cbb-frequently-bought-container,
+                [id*="cbb"],
+                [class*="cbb"],
+                [id*="frequently"],
+                [class*="frequently"],
+                [id*="bought"],
+                [class*="bought"],
+                shopify-payment-terms {
                     display: none !important;
                 }
             `;
 
             document.head.appendChild(style);
         }
+
+        document.querySelectorAll('body *').forEach(function(el) {
+            var text = (el.innerText || '').trim().toLowerCase();
+            var compactText = text.replace(/\\s+/g, ' ');
+
+            if (
+                text === 'frequently bought together'
+                || text === 'more payment options'
+                || (
+                    compactText.indexOf('pay with paypal') !== -1
+                    && compactText.length < 80
+                )
+            ) {
+                var block = el.closest(
+                    '[id*="cbb"], [class*="cbb"], section, form, div'
+                );
+
+                if (block) {
+                    block.style.display = 'none';
+                }
+            }
+        });
     """)

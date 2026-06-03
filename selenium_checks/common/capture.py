@@ -1,5 +1,9 @@
 import time
 
+from selenium.common.exceptions import StaleElementReferenceException
+
+from common.checks import hide_dynamic_elements
+
 from common.utils import (
     locate_element,
     build_paths
@@ -92,9 +96,7 @@ def wait_for_layout_stable(driver, element, timeout=10, check_interval=0.5):
     return False
 
 
-
-
-def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
+def _capture_modules_legacy(driver, modules, current_dir, baseline_dir, diff_dir):
 
     print("\n📸 模块截图")
 
@@ -167,3 +169,87 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
 
 
+def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
+
+    print("\n馃摳 妯″潡鎴浘")
+
+    results = {}
+
+    for name, locator in modules.items():
+
+        paths = build_paths(
+            current_dir,
+            baseline_dir,
+            diff_dir,
+            name
+        )
+
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+
+            try:
+
+                el = locate_element(driver, locator)
+
+                driver.execute_script("""
+                    arguments[0].scrollIntoView({
+                        block: 'center',
+                        inline: 'center'
+                    });
+                """, el)
+
+                time.sleep(0.5)
+
+                hide_dynamic_elements(driver)
+
+                wait_for_images(driver, el, timeout=10)
+
+                wait_for_reviews(driver, timeout=10)
+
+                wait_for_layout_stable(
+                    driver,
+                    el,
+                    timeout=10
+                )
+
+                time.sleep(1)
+
+                hide_dynamic_elements(driver)
+
+                el = locate_element(driver, locator)
+
+                el.screenshot(paths["current"])
+
+                results[name] = paths
+
+                print(f"鉁?[{name}]")
+
+                break
+
+            except StaleElementReferenceException as e:
+
+                if attempt == max_attempts:
+
+                    print(f"鉂?[{name}] {e}")
+
+                    results[name] = None
+
+                else:
+
+                    print(
+                        f"鈿狅笍 [{name}] stale, "
+                        f"retry {attempt}/{max_attempts}"
+                    )
+
+                    time.sleep(1)
+
+            except Exception as e:
+
+                print(f"鉂?[{name}] {e}")
+
+                results[name] = None
+
+                break
+
+    return results

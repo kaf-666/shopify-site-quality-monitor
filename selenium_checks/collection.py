@@ -9,7 +9,8 @@ from common.driver import init_driver
 
 from common.utils import (
     create_dirs,
-    build_paths
+    build_paths,
+    screenshot_root
 )
 
 from common.checks import (
@@ -27,7 +28,7 @@ URL = (
     "collections/wedding-guest-dresses"
 )
 
-ROOT_DIR = "screenshots/mondressy_US"
+ROOT_DIR = screenshot_root("mondressy_US")
 
 PAGE_DIR = os.path.join(ROOT_DIR, "collection")
 

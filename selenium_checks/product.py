@@ -10,7 +10,8 @@ from common.driver import init_driver
 
 from common.utils import (
     create_dirs,
-    locate_element
+    locate_element,
+    screenshot_root
 )
 
 from common.checks import (
@@ -33,7 +34,7 @@ URL = (
     "products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613"
 )
 
-ROOT_DIR = "screenshots/mondressy_US"
+ROOT_DIR = screenshot_root("mondressy_US")
 
 PAGE_DIR = os.path.join(ROOT_DIR, "product")
 
