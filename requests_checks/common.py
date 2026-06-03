@@ -1,6 +1,7 @@
 import requests
 import sys
 import time
+import os
 from bs4 import BeautifulSoup
 
 HEADERS = {
@@ -25,7 +26,7 @@ BAD_TITLES = [
     "blocked",
 ]
 
-MAX_RESPONSE_TIME = 5
+MAX_RESPONSE_TIME = float(os.environ.get("MAX_RESPONSE_TIME", "10"))
 
 
 def request_page(url):

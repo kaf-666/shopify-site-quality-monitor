@@ -1,5 +1,14 @@
 import subprocess
 import sys
+import os
+
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 def run_stage(label, folder, script):
     """运行指定阶段，返回是否成功"""
@@ -8,8 +17,9 @@ def run_stage(label, folder, script):
     print("=" * 60 + "\n")
 
     result = subprocess.run(
-        [sys.executable, "-m", script],
+        [sys.executable, "-u", "-m", script],
         cwd=folder,
+        env=os.environ.copy(),
     )
 
     if result.returncode != 0:
