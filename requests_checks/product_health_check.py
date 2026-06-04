@@ -1,4 +1,5 @@
 from common import (
+    CheckFailure,
     request_page,
     check_response_time,
     check_status_code,
@@ -14,6 +15,7 @@ EXPECTED_KEYWORDS = [
 
 
 def run():
+    failures = []
 
     try:
         response, response_time = request_page(URL)
@@ -23,13 +25,25 @@ def run():
         check_title(response, EXPECTED_KEYWORDS)
 
         if "/products/" not in response.text:
-            raise Exception("PDP页面异常")
+            raise CheckFailure("PDP页面异常")
 
         print("✅ PDP页面正常")
 
         print("🎉 PDP requests检测通过")
-        return True
+        return failures
 
     except Exception as e:
-        print(f"❌ PDP检测失败: {e}")
-        return False
+        failures.append(f"PDP: {e}")
+        print("❌ PDP requests检测失败（详见失败汇总）")
+        return failures
+
+
+if __name__ == "__main__":
+    import sys
+
+    page_failures = run()
+    if page_failures:
+        print("\n❌ PDP requests 失败汇总")
+        for index, failure in enumerate(page_failures, 1):
+            print(f"{index}. {failure}")
+    sys.exit(1 if page_failures else 0)

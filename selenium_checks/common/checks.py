@@ -4,6 +4,7 @@ from common.utils import locate_element
 def dom_check(driver, modules):
 
     print("\n🧩 DOM检测")
+    failures = []
 
     for name, locator in modules.items():
 
@@ -24,9 +25,17 @@ def dom_check(driver, modules):
                 f"size_ok={size_ok}"
             )
 
+            if not visible or not size_ok:
+                failures.append(
+                    f"DOM [{name}] visible={visible}, size_ok={size_ok}"
+                )
+
         except Exception as e:
 
             print(f"❌ [{name}] DOM异常: {e}")
+            failures.append(f"DOM [{name}] 异常: {e}")
+
+    return failures
 
 
 def hide_dynamic_elements(driver):
@@ -52,6 +61,9 @@ def hide_dynamic_elements(driver):
                 [class*="frequently"],
                 [id*="bought"],
                 [class*="bought"],
+                .shopify-payment-button,
+                .shopify-payment-button__button,
+                [data-shopify="payment-button"],
                 shopify-payment-terms {
                     display: none !important;
                 }
@@ -67,6 +79,7 @@ def hide_dynamic_elements(driver):
             if (
                 text === 'frequently bought together'
                 || text === 'more payment options'
+                || text === 'buy it now'
                 || (
                     compactText.indexOf('pay with paypal') !== -1
                     && compactText.length < 80

@@ -38,12 +38,15 @@ def compare_images(img1_path, img2_path, diff_path):
 
 
 def process_results(results):
+    failures = []
 
     for name, paths in results.items():
 
-        if paths is None:
+        if paths is None or paths.get("error"):
 
-            print(f"🚨 [{name}] 截图失败")
+            error = paths.get("error") if paths else "截图失败"
+            print(f"🚨 [{name}] {error}")
+            failures.append(f"视觉 [{name}] {error}")
 
             continue
 
@@ -72,9 +75,14 @@ def process_results(results):
         else:
 
             print(f"❌ [{name}] 变化 {ratio:.2%}")
+            failures.append(
+                f"视觉 [{name}] diff {ratio:.2%} 超过阈值 {CHANGE_THRESHOLD:.2%}"
+            )
 
             if ratio < AUTO_UPDATE_THRESHOLD:
 
                 shutil.copy2(cur, base)
 
                 print(f"🔄 [{name}] 自动更新 baseline")
+
+    return failures

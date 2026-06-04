@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 from selenium.webdriver.common.by import By
@@ -131,6 +132,7 @@ EXPECTED_COUNT = 40
 def check_product_count(driver):
 
     print("\n🛍 商品数量检测")
+    failures = []
 
     scroll_to_load_all(driver, ".grid__item.grid-product", timeout=15)
 
@@ -142,6 +144,11 @@ def check_product_count(driver):
         print(f"✅ 商品数量正确: {count}")
     else:
         print(f"❌ 商品数量异常: {count}，期望: {EXPECTED_COUNT}")
+        failures.append(
+            f"商品数量异常: 实际 {count}, 期望 {EXPECTED_COUNT}"
+        )
+
+    return failures
 
 
 
@@ -189,9 +196,9 @@ def capture_product_cards(driver):
 
         except Exception as e:
 
-            print(f"❌ product_{i}: {e}")
+            print(f"❌ product_{i} 截图失败（详见失败汇总）")
 
-            results[f"product_{i}"] = None
+            results[f"product_{i}"] = {"error": f"截图失败: {e}"}
 
     return results
 
@@ -231,14 +238,15 @@ def capture_hover_cards(driver):
 
         except Exception as e:
 
-            print(f"❌ hover_{i}: {e}")
+            print(f"❌ hover_{i} 截图失败（详见失败汇总）")
 
-            results[f"hover_{i}"] = None
+            results[f"hover_{i}"] = {"error": f"截图失败: {e}"}
 
     return results
 
 
 def run():
+    failures = []
 
     create_dirs(
         BASELINE_DIR,
@@ -246,9 +254,10 @@ def run():
         DIFF_DIR
     )
 
-    driver = init_driver()
+    driver = None
 
     try:
+        driver = init_driver()
 
         driver.get(URL)
 
@@ -260,9 +269,9 @@ def run():
 
         time.sleep(2)
 
-        dom_check(driver, MODULES)
+        failures.extend(dom_check(driver, MODULES))
 
-        check_product_count(driver)
+        failures.extend(check_product_count(driver))
 
         hide_dynamic_elements(driver)
 
@@ -278,17 +287,29 @@ def run():
 
         hover_results = capture_hover_cards(driver)
 
-        process_results(module_results)
+        failures.extend(process_results(module_results))
 
-        process_results(product_results)
+        failures.extend(process_results(product_results))
 
-        process_results(hover_results)
+        failures.extend(process_results(hover_results))
+
+    except Exception as e:
+
+        failures.append(f"PLP: Selenium运行异常: {e}")
 
     finally:
 
-        driver.quit()
+        if driver:
+            driver.quit()
+
+    return failures
 
 
 if __name__ == "__main__":
 
-    run()
+    page_failures = run()
+    if page_failures:
+        print("\n❌ PLP Selenium 失败汇总")
+        for index, failure in enumerate(page_failures, 1):
+            print(f"{index}. {failure}")
+    sys.exit(1 if page_failures else 0)

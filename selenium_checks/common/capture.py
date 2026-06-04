@@ -161,9 +161,9 @@ def _capture_modules_legacy(driver, modules, current_dir, baseline_dir, diff_dir
 
         except Exception as e:
 
-            print(f"❌ [{name}] {e}")
+            print(f"❌ [{name}] 截图失败（详见失败汇总）")
 
-            results[name] = None
+            results[name] = {"error": f"截图失败: {e}"}
 
     return results
 
@@ -171,7 +171,7 @@ def _capture_modules_legacy(driver, modules, current_dir, baseline_dir, diff_dir
 
 def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
-    print("\n馃摳 妯″潡鎴浘")
+    print("\n📸 模块截图")
 
     results = {}
 
@@ -203,15 +203,18 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
                 hide_dynamic_elements(driver)
 
-                wait_for_images(driver, el, timeout=10)
+                if not wait_for_images(driver, el, timeout=10):
+                    raise Exception("等待图片超时")
 
-                wait_for_reviews(driver, timeout=10)
+                if not wait_for_reviews(driver, timeout=10):
+                    raise Exception("等待评分组件超时")
 
-                wait_for_layout_stable(
+                if not wait_for_layout_stable(
                     driver,
                     el,
                     timeout=10
-                )
+                ):
+                    raise Exception("布局未稳定")
 
                 time.sleep(1)
 
@@ -223,7 +226,7 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
                 results[name] = paths
 
-                print(f"鉁?[{name}]")
+                print(f"✅ [{name}]")
 
                 break
 
@@ -231,14 +234,14 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
                 if attempt == max_attempts:
 
-                    print(f"鉂?[{name}] {e}")
+                    print(f"❌ [{name}] {e}")
 
-                    results[name] = None
+                    results[name] = {"error": f"截图失败: {e}"}
 
                 else:
 
                     print(
-                        f"鈿狅笍 [{name}] stale, "
+                        f"⚠️ [{name}] stale, "
                         f"retry {attempt}/{max_attempts}"
                     )
 
@@ -246,9 +249,9 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
             except Exception as e:
 
-                print(f"鉂?[{name}] {e}")
+                print(f"❌ [{name}] {e}")
 
-                results[name] = None
+                results[name] = {"error": f"截图失败: {e}"}
 
                 break
 

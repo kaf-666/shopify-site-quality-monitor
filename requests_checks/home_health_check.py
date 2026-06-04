@@ -14,6 +14,7 @@ EXPECTED_KEYWORDS = [
 
 
 def run():
+    failures = []
 
     try:
         response, response_time = request_page(URL)
@@ -23,8 +24,20 @@ def run():
         check_title(response, EXPECTED_KEYWORDS)
 
         print("🎉 首页 requests检测通过")
-        return True
+        return failures
 
     except Exception as e:
-        print(f"❌ 首页检测失败: {e}")
-        return False
+        failures.append(f"首页: {e}")
+        print("❌ 首页 requests检测失败（详见失败汇总）")
+        return failures
+
+
+if __name__ == "__main__":
+    import sys
+
+    page_failures = run()
+    if page_failures:
+        print("\n❌ 首页 requests 失败汇总")
+        for index, failure in enumerate(page_failures, 1):
+            print(f"{index}. {failure}")
+    sys.exit(1 if page_failures else 0)

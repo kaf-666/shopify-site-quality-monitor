@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 
 from selenium.webdriver.common.by import By
@@ -65,6 +66,7 @@ MODULES = {
 def check_add_to_cart(driver):
 
     print("\n🛒 Add To Cart状态")
+    failures = []
 
     try:
 
@@ -77,9 +79,15 @@ def check_add_to_cart(driver):
             f"enabled={btn.is_enabled()}"
         )
 
+        if not btn.is_enabled():
+            failures.append("Add To Cart按钮不可用")
+
     except Exception as e:
 
         print(f"❌ {e}")
+        failures.append(f"Add To Cart状态异常: {e}")
+
+    return failures
 
 
 def check_variant_count(driver):
@@ -97,6 +105,7 @@ def test_variants(driver):
     print("\n🎨 Variant检测")
 
     results = {}
+    failures = []
 
     try:
 
@@ -109,7 +118,8 @@ def test_variants(driver):
 
             print("⚠ 未找到variant")
 
-            return results
+            failures.append("Variant未找到")
+            return results, failures
 
         for i, v in enumerate(variants[:3]):
 
@@ -184,21 +194,23 @@ def test_variants(driver):
 
             except Exception as e:
 
-                print(f"❌ Variant {i}: {e}")
+                print(f"❌ Variant {i} 截图失败（详见失败汇总）")
 
-                results[f"variant_{i}"] = None
+                results[f"variant_{i}"] = {"error": f"截图失败: {e}"}
 
     except Exception as e:
 
         print(f"❌ Variant检测失败: {e}")
+        failures.append(f"Variant检测失败: {e}")
 
-    return results
+    return results, failures
 
 
 
 def test_add_to_cart(driver):
 
     print("\n🛒 Add To Cart检测")
+    failures = []
 
     try:
 
@@ -216,6 +228,9 @@ def test_add_to_cart(driver):
     except Exception as e:
 
         print(f"❌ {e}")
+        failures.append(f"Add To Cart点击失败: {e}")
+
+    return failures
 
 
 def wait_for_visible(driver, locator, timeout=45):
@@ -259,6 +274,7 @@ def wait_for_product_page(driver):
 
 
 def run():
+    failures = []
 
     create_dirs(
         BASELINE_DIR,
@@ -266,9 +282,10 @@ def run():
         DIFF_DIR
     )
 
-    driver = init_driver()
+    driver = None
 
     try:
+        driver = init_driver()
 
         driver.get(URL)
 
@@ -276,9 +293,9 @@ def run():
 
         time.sleep(2)
 
-        dom_check(driver, MODULES)
+        failures.extend(dom_check(driver, MODULES))
 
-        check_add_to_cart(driver)
+        failures.extend(check_add_to_cart(driver))
 
         check_variant_count(driver)
 
@@ -292,19 +309,32 @@ def run():
             DIFF_DIR
         )
 
-        variant_results = test_variants(driver)
+        variant_results, variant_failures = test_variants(driver)
+        failures.extend(variant_failures)
 
-        test_add_to_cart(driver)
+        failures.extend(test_add_to_cart(driver))
 
-        process_results(module_results)
+        failures.extend(process_results(module_results))
 
-        process_results(variant_results)
+        failures.extend(process_results(variant_results))
+
+    except Exception as e:
+
+        failures.append(f"PDP: Selenium运行异常: {e}")
 
     finally:
 
-        driver.quit()
+        if driver:
+            driver.quit()
+
+    return failures
 
 
 if __name__ == "__main__":
 
-    run()
+    page_failures = run()
+    if page_failures:
+        print("\n❌ PDP Selenium 失败汇总")
+        for index, failure in enumerate(page_failures, 1):
+            print(f"{index}. {failure}")
+    sys.exit(1 if page_failures else 0)
