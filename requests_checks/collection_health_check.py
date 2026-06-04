@@ -6,6 +6,7 @@ from common import (
     check_title,
 )
 
+# PLP（商品列表页）健康检查：验证集合页能正常返回且页面内容像 collection。
 URL = "https://mondressy.com/collections/wedding-guest-dresses"
 
 EXPECTED_KEYWORDS = [
@@ -15,6 +16,7 @@ EXPECTED_KEYWORDS = [
 
 
 def run():
+    """执行 PLP requests 检测，返回失败信息列表。"""
     failures = []
 
     try:
@@ -24,6 +26,7 @@ def run():
         check_status_code(response)
         check_title(response, EXPECTED_KEYWORDS)
 
+        # title 正常还不够，这里再用路径标识确认没有跳到异常页。
         if "/collections/" not in response.text:
             raise CheckFailure("Collection页面异常")
 

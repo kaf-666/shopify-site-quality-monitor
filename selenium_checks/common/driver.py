@@ -5,8 +5,10 @@ import os
 
 
 def init_driver():
+    """初始化视觉回归专用的 ChromeDriver。"""
 
     options = Options()
+    # eager 能在 DOM 可用后继续执行，减少第三方资源拖慢整页加载。
     options.page_load_strategy = "eager"
 
     options.add_argument("--headless=new")

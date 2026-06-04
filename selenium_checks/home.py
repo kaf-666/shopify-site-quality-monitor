@@ -5,6 +5,7 @@ import tempfile
 
 import numpy as np
 from PIL import Image
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 
 from common.driver import init_driver
@@ -12,6 +13,7 @@ from common.driver import init_driver
 from common.utils import (
     create_dirs,
     locate_element,
+    open_page_with_retry,
     build_paths,
     screenshot_root
 )
@@ -27,12 +29,18 @@ from common.capture import (
     wait_for_layout_stable
 )
 
-from common.visual import process_results
+from common.test_results import add_result, clear_results, write_results
+from common.visual import build_result, process_results
 
 
 URL = "https://www.mondressy.com"
 
-ROOT_DIR = screenshot_root("mondressy_US")
+# 当前脚本的结果会按 site/suite/page 写入统一报告。
+SITE = "mondressy_US"
+SUITE = "visual"
+PAGE = "home"
+
+ROOT_DIR = screenshot_root(SITE)
 
 PAGE_DIR = os.path.join(ROOT_DIR, "home")
 
@@ -42,6 +50,7 @@ DIFF_DIR = os.path.join(PAGE_DIR, "diff")
 
 
 MODULES = {
+    # 首页主模块截图点：头部、首屏 banner、集合区和常用图标入口。
     "header_1": ("xpath", "(//*[contains(@class, 'header-group')])[1]"),
     "header_2": ("xpath", "(//*[contains(@class, 'header-group')])[2]"),
     "banner": ("xpath", "//*[contains(@class,'slideshow__slide') and contains(@class,'is-selected')]"),
@@ -55,6 +64,7 @@ MODULES = {
 
 
 PLUGINS = {
+    # 第三方插件独立检测，避免它们影响主模块截图判断。
 
     "wishlist": (
         "xpath",
@@ -69,6 +79,7 @@ PLUGINS = {
 
 
 def check_plugins(driver):
+    """检查首页插件是否能找到且可见。"""
 
     print("\n🔌 插件检测")
     failures = []
@@ -97,6 +108,7 @@ def check_plugins(driver):
 
 
 def capture_plugins(driver):
+    """分别截取插件区域，后续作为独立视觉用例对比。"""
 
     print("\n📸 插件截图")
 
@@ -111,24 +123,48 @@ def capture_plugins(driver):
             name
         )
 
-        try:
+        max_attempts = 2
 
-            capture_stable_plugin(driver, name, locator, paths["current"])
+        for attempt in range(1, max_attempts + 1):
 
-            results[name] = paths
+            try:
 
-            print(f"✅ [{name}]")
+                capture_stable_plugin(
+                    driver,
+                    name,
+                    locator,
+                    paths["current"],
+                    timeout=20
+                )
 
-        except Exception as e:
+                results[name] = paths
 
-            print(f"❌ [{name}] 插件截图失败（详见失败汇总）")
+                print(f"✅ [{name}]")
 
-            results[name] = {"error": f"插件截图失败: {e}"}
+                break
+
+            except Exception as e:
+
+                if attempt == max_attempts:
+
+                    print(f"❌ [{name}] 插件截图失败（详见失败汇总）")
+
+                    results[name] = {"error": f"插件截图失败: {e}"}
+
+                else:
+
+                    print(
+                        f"⚠️ [{name}] 插件截图未稳定, "
+                        f"retry {attempt}/{max_attempts}"
+                    )
+
+                    time.sleep(1)
 
     return results
 
 
 def images_close(path1, path2, threshold=0.001):
+    """判断两张临时截图是否足够接近，用于确认插件渲染稳定。"""
     img1 = np.array(Image.open(path1).convert("RGB"))
     img2 = np.array(Image.open(path2).convert("RGB"))
 
@@ -141,6 +177,7 @@ def images_close(path1, path2, threshold=0.001):
 
 
 def plugin_image_ready(name, path):
+    """检查插件截图是否已经渲染到可对比状态。"""
     if name != "currency":
         return True
 
@@ -150,6 +187,7 @@ def plugin_image_ready(name, path):
 
 
 def normalize_plugin_for_screenshot(driver, name, element):
+    """对容易受样式影响的插件做截图前归一化。"""
     if name != "currency":
         return
 
@@ -169,6 +207,7 @@ def normalize_plugin_for_screenshot(driver, name, element):
 
 
 def capture_stable_plugin(driver, name, locator, output_path, timeout=10):
+    """重复截取插件，直到连续两次画面足够接近。"""
     end_time = time.time() + timeout
     previous_path = None
 
@@ -207,6 +246,7 @@ def capture_stable_plugin(driver, name, locator, output_path, timeout=10):
 
 
 def stabilize_banner(driver):
+    """停止首页轮播并固定到第一张，减少自动轮播造成的 diff。"""
     driver.execute_script("""
         document.querySelectorAll('.flickity-enabled').forEach(function(el) {
             // Flickity.data() 是官方静态方法，比 el.flickity 可靠
@@ -220,7 +260,35 @@ def stabilize_banner(driver):
     time.sleep(1)
 
 
+def wait_for_home_page(driver):
+    """等待首页关键模块可见。"""
+
+    try:
+
+        WebDriverWait(driver, 15).until(
+            lambda d: d.execute_script(
+                "return document.readyState"
+            ) in ("interactive", "complete")
+        )
+
+    except TimeoutException:
+
+        state = driver.execute_script(
+            "return document.readyState"
+        )
+
+        print(
+            f"Home readyState wait skipped, "
+            f"state={state}, url={driver.current_url}"
+        )
+
+    locate_element(driver, MODULES["header_1"])
+
+    locate_element(driver, MODULES["banner"])
+
+
 def run():
+    """执行首页 Selenium 视觉检测并返回失败信息列表。"""
     failures = []
 
     create_dirs(
@@ -234,13 +302,7 @@ def run():
     try:
         driver = init_driver()
 
-        driver.get(URL)
-
-        WebDriverWait(driver, 15).until(
-            lambda d: d.execute_script(
-                "return document.readyState"
-            ) == "complete"
-        )
+        open_page_with_retry(driver, URL, wait_for_home_page, "Home")
 
         time.sleep(2)
 
@@ -259,16 +321,29 @@ def run():
             MODULES,
             CURRENT_DIR,
             BASELINE_DIR,
-            DIFF_DIR
+            DIFF_DIR,
+            require_reviews=False
         )
 
-        failures.extend(process_results(module_results))
+        failures.extend(process_results(module_results, SITE, SUITE, PAGE))
 
-        failures.extend(process_results(plugin_results))
+        failures.extend(process_results(plugin_results, SITE, SUITE, PAGE))
 
     except Exception as e:
 
-        failures.append(f"首页: Selenium运行异常: {e}")
+        error = f"Selenium运行异常: {type(e).__name__}: {e}"
+        failures.append(f"首页: {error}")
+        add_result(
+            build_result(
+                SITE,
+                SUITE,
+                PAGE,
+                "runtime",
+                "failed",
+                None,
+                error=error
+            )
+        )
 
     finally:
 
@@ -280,7 +355,10 @@ def run():
 
 if __name__ == "__main__":
 
+    clear_results()
     page_failures = run()
+    results_file = write_results()
+    print(f"\n📄 视觉测试结果: {results_file}")
     if page_failures:
         print("\n❌ 首页 Selenium 失败汇总")
         for index, failure in enumerate(page_failures, 1):

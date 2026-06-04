@@ -5,6 +5,7 @@ from common import (
     check_title,
 )
 
+# 首页健康检查：只验证页面能访问、响应够快、title 与品牌相关。
 URL = "https://www.mondressy.com"
 
 EXPECTED_KEYWORDS = [
@@ -14,6 +15,7 @@ EXPECTED_KEYWORDS = [
 
 
 def run():
+    """执行首页 requests 检测，返回失败信息列表。"""
     failures = []
 
     try:

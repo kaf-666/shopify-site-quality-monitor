@@ -2,6 +2,7 @@ from common.utils import locate_element
 
 
 def dom_check(driver, modules):
+    """检查每个页面模块是否可见且尺寸有效。"""
 
     print("\n🧩 DOM检测")
     failures = []
@@ -41,6 +42,7 @@ def dom_check(driver, modules):
 def hide_dynamic_elements(driver):
     """隐藏所有干扰截图的动态元素"""
 
+    # 价格、评分、支付插件等经常异步变化，视觉回归前统一隐藏。
     driver.execute_script("""
         if (!document.getElementById('screenshot-hack')) {
 

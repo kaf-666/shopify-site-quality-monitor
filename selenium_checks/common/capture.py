@@ -97,6 +97,7 @@ def wait_for_layout_stable(driver, element, timeout=10, check_interval=0.5):
 
 
 def _capture_modules_legacy(driver, modules, current_dir, baseline_dir, diff_dir):
+    """旧版模块截图流程，保留作参考或回退。"""
 
     print("\n📸 模块截图")
 
@@ -169,7 +170,15 @@ def _capture_modules_legacy(driver, modules, current_dir, baseline_dir, diff_dir
 
 
 
-def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
+def capture_modules(
+    driver,
+    modules,
+    current_dir,
+    baseline_dir,
+    diff_dir,
+    require_reviews=True
+):
+    """对页面模块截图，包含滚动、隐藏动态元素、等待稳定和 stale 重试。"""
 
     print("\n📸 模块截图")
 
@@ -201,12 +210,13 @@ def capture_modules(driver, modules, current_dir, baseline_dir, diff_dir):
 
                 time.sleep(0.5)
 
+                # 每次截图前都重新隐藏动态区域，避免插件二次渲染后露出。
                 hide_dynamic_elements(driver)
 
                 if not wait_for_images(driver, el, timeout=10):
                     raise Exception("等待图片超时")
 
-                if not wait_for_reviews(driver, timeout=10):
+                if require_reviews and not wait_for_reviews(driver, timeout=10):
                     raise Exception("等待评分组件超时")
 
                 if not wait_for_layout_stable(

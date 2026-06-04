@@ -6,6 +6,7 @@ from common import (
     check_title,
 )
 
+# PDP（商品详情页）健康检查：验证指定商品页可访问且内容像 product。
 URL = "https://mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613"
 
 EXPECTED_KEYWORDS = [
@@ -15,6 +16,7 @@ EXPECTED_KEYWORDS = [
 
 
 def run():
+    """执行 PDP requests 检测，返回失败信息列表。"""
     failures = []
 
     try:
@@ -24,6 +26,7 @@ def run():
         check_status_code(response)
         check_title(response, EXPECTED_KEYWORDS)
 
+        # 简单确认 HTML 里包含商品路径，避免 200 状态的软错误页漏检。
         if "/products/" not in response.text:
             raise CheckFailure("PDP页面异常")
 

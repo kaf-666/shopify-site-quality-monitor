@@ -3,7 +3,7 @@ import sys
 import time
 
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
@@ -12,6 +12,7 @@ from common.driver import init_driver
 from common.utils import (
     create_dirs,
     locate_element,
+    open_page_with_retry,
     screenshot_root
 )
 
@@ -27,7 +28,8 @@ from common.capture import (
     wait_for_layout_stable
 )
 
-from common.visual import process_results
+from common.test_results import add_result, clear_results, write_results
+from common.visual import build_result, process_results
 
 
 URL = (
@@ -35,7 +37,11 @@ URL = (
     "products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613"
 )
 
-ROOT_DIR = screenshot_root("mondressy_US")
+SITE = "mondressy_US"
+SUITE = "visual"
+PAGE = "product"
+
+ROOT_DIR = screenshot_root(SITE)
 
 PAGE_DIR = os.path.join(ROOT_DIR, "product")
 
@@ -45,6 +51,7 @@ DIFF_DIR = os.path.join(PAGE_DIR, "diff")
 
 
 MODULES = {
+    # PDP 主模块：商品图、商品信息和加购按钮。
 
     "gallery": (
         "xpath",
@@ -64,6 +71,7 @@ MODULES = {
 
 
 def check_add_to_cart(driver):
+    """检查 Add To Cart 按钮是否可用。"""
 
     print("\n🛒 Add To Cart状态")
     failures = []
@@ -91,6 +99,7 @@ def check_add_to_cart(driver):
 
 
 def check_variant_count(driver):
+    """打印当前商品可选 variant 数量。"""
 
     variants = driver.find_elements(
         By.XPATH,
@@ -101,6 +110,7 @@ def check_variant_count(driver):
 
 
 def test_variants(driver):
+    """切换前几个 variant，并分别截取商品图区域。"""
 
     print("\n🎨 Variant检测")
 
@@ -121,7 +131,9 @@ def test_variants(driver):
             failures.append("Variant未找到")
             return results, failures
 
-        for i, v in enumerate(variants[:3]):
+        variant_count = min(3, len(variants))
+
+        for i in range(variant_count):
 
             paths = {
 
@@ -141,62 +153,103 @@ def test_variants(driver):
                 ),
             }
 
-            try:
+            max_attempts = 3
 
-                driver.execute_script(
-                    "arguments[0].click();",
-                    v
-                )
+            for attempt in range(1, max_attempts + 1):
 
-                time.sleep(2)
+                try:
 
-                gallery = locate_element(
-                    driver,
-                    MODULES["gallery"]
-                )
+                    variants = driver.find_elements(
+                        By.XPATH,
+                        "//*[contains(@class,'variant')]//input"
+                    )
 
-                driver.execute_script("""
-                    arguments[0].scrollIntoView({
-                        block: 'center'
-                    });
-                """, gallery)
+                    if i >= len(variants):
+                        raise Exception(f"Variant {i} 不存在")
 
-                # ★ variant切换后重新隐藏
-                hide_dynamic_elements(driver)
+                    v = variants[i]
 
-                wait_for_images(driver, gallery, timeout=10)
+                    driver.execute_script("""
+                        arguments[0].scrollIntoView({
+                            block: 'center'
+                        });
+                    """, v)
 
-                wait_for_reviews(driver, timeout=10)
+                    driver.execute_script(
+                        "arguments[0].click();",
+                        v
+                    )
 
-                wait_for_layout_stable(
-                    driver,
-                    gallery,
-                    timeout=10
-                )
+                    time.sleep(2)
 
-                # ★ 有些插件会二次render
-                hide_dynamic_elements(driver)
+                    gallery = locate_element(
+                        driver,
+                        MODULES["gallery"]
+                    )
 
-                time.sleep(0.5)
+                    driver.execute_script("""
+                        arguments[0].scrollIntoView({
+                            block: 'center'
+                        });
+                    """, gallery)
 
-                gallery = locate_element(
-                    driver,
-                    MODULES["gallery"]
-                )
+                    # ★ variant切换后重新隐藏
+                    hide_dynamic_elements(driver)
 
-                gallery.screenshot(
-                    paths["current"]
-                )
+                    wait_for_images(driver, gallery, timeout=10)
 
-                results[f"variant_{i}"] = paths
+                    wait_for_reviews(driver, timeout=10)
 
-                print(f"✅ Variant {i}")
+                    wait_for_layout_stable(
+                        driver,
+                        gallery,
+                        timeout=10
+                    )
 
-            except Exception as e:
+                    # ★ 有些插件会二次render
+                    hide_dynamic_elements(driver)
 
-                print(f"❌ Variant {i} 截图失败（详见失败汇总）")
+                    time.sleep(0.5)
 
-                results[f"variant_{i}"] = {"error": f"截图失败: {e}"}
+                    gallery = locate_element(
+                        driver,
+                        MODULES["gallery"]
+                    )
+
+                    gallery.screenshot(
+                        paths["current"]
+                    )
+
+                    results[f"variant_{i}"] = paths
+
+                    print(f"✅ Variant {i}")
+
+                    break
+
+                except StaleElementReferenceException as e:
+
+                    if attempt == max_attempts:
+
+                        print(f"❌ Variant {i} 截图失败（详见失败汇总）")
+
+                        results[f"variant_{i}"] = {"error": f"截图失败: {e}"}
+
+                    else:
+
+                        print(
+                            f"⚠️ Variant {i} stale, "
+                            f"retry {attempt}/{max_attempts}"
+                        )
+
+                        time.sleep(1)
+
+                except Exception as e:
+
+                    print(f"❌ Variant {i} 截图失败（详见失败汇总）")
+
+                    results[f"variant_{i}"] = {"error": f"截图失败: {e}"}
+
+                    break
 
     except Exception as e:
 
@@ -208,6 +261,7 @@ def test_variants(driver):
 
 
 def test_add_to_cart(driver):
+    """点击 Add To Cart，确认基础加购链路没有报错。"""
 
     print("\n🛒 Add To Cart检测")
     failures = []
@@ -234,6 +288,7 @@ def test_add_to_cart(driver):
 
 
 def wait_for_visible(driver, locator, timeout=45):
+    """等待指定 locator 对应元素变为可见。"""
 
     method, value = locator
 
@@ -245,6 +300,7 @@ def wait_for_visible(driver, locator, timeout=45):
 
 
 def wait_for_product_page(driver):
+    """等待 PDP 的关键购买区域加载完成。"""
 
     try:
 
@@ -274,6 +330,7 @@ def wait_for_product_page(driver):
 
 
 def run():
+    """执行 PDP Selenium 视觉检测并返回失败信息列表。"""
     failures = []
 
     create_dirs(
@@ -287,9 +344,7 @@ def run():
     try:
         driver = init_driver()
 
-        driver.get(URL)
-
-        wait_for_product_page(driver)
+        open_page_with_retry(driver, URL, wait_for_product_page, "PDP")
 
         time.sleep(2)
 
@@ -314,13 +369,25 @@ def run():
 
         failures.extend(test_add_to_cart(driver))
 
-        failures.extend(process_results(module_results))
+        failures.extend(process_results(module_results, SITE, SUITE, PAGE))
 
-        failures.extend(process_results(variant_results))
+        failures.extend(process_results(variant_results, SITE, SUITE, PAGE))
 
     except Exception as e:
 
-        failures.append(f"PDP: Selenium运行异常: {e}")
+        error = f"Selenium运行异常: {type(e).__name__}: {e}"
+        failures.append(f"PDP: {error}")
+        add_result(
+            build_result(
+                SITE,
+                SUITE,
+                PAGE,
+                "runtime",
+                "failed",
+                None,
+                error=error
+            )
+        )
 
     finally:
 
@@ -332,7 +399,10 @@ def run():
 
 if __name__ == "__main__":
 
+    clear_results()
     page_failures = run()
+    results_file = write_results()
+    print(f"\n📄 视觉测试结果: {results_file}")
     if page_failures:
         print("\n❌ PDP Selenium 失败汇总")
         for index, failure in enumerate(page_failures, 1):
