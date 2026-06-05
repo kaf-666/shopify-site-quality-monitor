@@ -1,0 +1,26 @@
+default_site: mondressy_US
+screenshot_suffix: _playwright
+results_file: reports/visual-results.json
+browser:
+  channel: chrome
+  headed: false
+run_viewports:
+  - desktop
+  - mobile
+viewports:
+  desktop:
+    width: 1600
+    height: 4000
+    device_scale_factor: 1
+    is_mobile: false
+    has_touch: false
+  mobile:
+    width: 390
+    height: 844
+    device_scale_factor: 2
+    is_mobile: true
+    has_touch: true
+    user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36"
+visual:
+  change_threshold: 0.005
+  warning_threshold: 0.02

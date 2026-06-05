@@ -1,0 +1,99 @@
+site: lavetir_US
+
+dynamic_hide:
+  selectors:
+    - ".price"
+    - ".sale-badge"
+    - ".spr-badge"
+    - "#size_error"
+    - ".alr-wh-rw-popup"
+    - ".cbb-frequently-bought-container"
+    - "[id*='cbb']"
+    - "[class*='cbb']"
+    - "[id*='frequently']"
+    - "[class*='frequently']"
+    - "[id*='bought']"
+    - "[class*='bought']"
+    - ".shopify-payment-button"
+    - ".shopify-payment-button__button"
+    - "[data-shopify='payment-button']"
+    - "shopify-payment-terms"
+  text_exact:
+    - frequently bought together
+    - more payment options
+    - buy it now
+  text_contains:
+    - pay with paypal
+
+access_denied_patterns:
+  - 正在进行安全验证
+  - Cloudflare Ray ID
+
+pages:
+  home:
+    url: https://www.lavetir.com/
+    expected_keywords:
+      - lavetir
+    modules:
+      header_1:
+        - css
+        - "header, .site-header, .shopify-section-header, [id*='shopify-section-header']"
+      header_2:
+        - css
+        - ".announcement-bar, [id*='announcement'], header, .site-header"
+      banner:
+        - css
+        - "[class*='slideshow'], [class*='banner'], [class*='hero'], [id*='banner']"
+      collections:
+        - xpath
+        - "(//*[contains(@id,'shopify-section')][.//a[contains(@href,'/collections/')]])[1]"
+      collections_1:
+        - xpath
+        - "(//*[contains(@id,'shopify-section')][.//a[contains(@href,'/collections/')]])[2]"
+      user_btn:
+        - xpath
+        - "//*[self::a or self::button][contains(@href,'/account') or contains(@aria-label,'Account') or contains(@class,'account')]"
+      cart_btn:
+        - xpath
+        - "//*[self::a or self::button][contains(@href,'/cart') or contains(@aria-label,'Cart') or contains(@class,'cart')]"
+      search_btn:
+        - xpath
+        - "//*[self::a or self::button][contains(@aria-label,'Search') or contains(@class,'search')]"
+
+  collection:
+    url: https://www.lavetir.com/collections/mother-of-the-bride-dresses
+    expected_keywords:
+      - mother
+      - bride
+    modules:
+      product_grid:
+        - css
+        - "#ProductGridContainer, .product-grid, ul.grid, [class*='product-grid'], [class*='collection-products']"
+      filter:
+        - css
+        - "facet-filters-form, .facets-container, [class*='filter'], [class*='sort']"
+      pagination:
+        - css
+        - ".pagination, nav[role='navigation'], a[href*='page=']"
+    product_card:
+      - css
+      - "#ProductGridContainer a[href*='/products/'], .product-grid a[href*='/products/'], a[href*='/products/']"
+
+  product:
+    url: https://www.lavetir.com/collections/mother-of-the-bride-dresses/products/lace-chiffon-square-neck-3-4-sleeves-3-pieces-pantsuits-with-appliques-jacket-22441666
+    expected_keywords:
+      - lace
+      - chiffon
+    modules:
+      gallery:
+        - css
+        - "media-gallery, .product__media-wrapper, [class*='gallery'], [class*='product__photos'], [class*='product-media']"
+      info:
+        - css
+        - ".product__info-wrapper, .product-single__meta, [class*='product-info'], [class*='product__info']"
+      add_to_cart:
+        - css
+        - "form[action*='/cart/add'] button[name='add'], button[name='add'], [type='submit'][name='add']"
+    variant_inputs:
+      - css
+      - "variant-radios input, variant-selects select, .product-form__input input, [class*='variant'] input"

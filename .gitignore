@@ -1,3 +1,9 @@
 .venv/
+.idea/
 __pycache__/
 *.py[cod]
+reports/
+driver/*.exe
+screenshots/**/current/
+screenshots/**/diff/
+screenshots/**/*_compare.png

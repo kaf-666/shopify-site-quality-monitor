@@ -1,0 +1,104 @@
+site: mondressy_UK
+
+dynamic_hide:
+  selectors:
+    - ".price"
+    - ".sale-badge"
+    - ".spr-badge"
+    - "#size_error"
+    - ".alr-wh-rw-popup"
+    - ".cbb-frequently-bought-container"
+    - "[id*='cbb']"
+    - "[class*='cbb']"
+    - "[id*='frequently']"
+    - "[class*='frequently']"
+    - "[id*='bought']"
+    - "[class*='bought']"
+    - ".shopify-payment-button"
+    - ".shopify-payment-button__button"
+    - "[data-shopify='payment-button']"
+    - "shopify-payment-terms"
+  text_exact:
+    - frequently bought together
+    - more payment options
+    - buy it now
+  text_contains:
+    - pay with paypal
+
+pages:
+  home:
+    url: https://mondressy.co.uk/
+    expected_keywords:
+      - mondressy
+    capture_exclude:
+      - collections_1
+    modules:
+      header_1:
+        - xpath
+        - "(//*[contains(@class, 'shopify-section-group-header-group')])[1]"
+      header_2:
+        - xpath
+        - "(//*[contains(@class, 'shopify-section-group-header-group')])[2]"
+      banner:
+        - xpath
+        - "//*[contains(@class,'slideshow__slide') and contains(@class,'is-selected')]"
+      collections:
+        - css
+        - ".mygrid"
+      collections_1:
+        - xpath
+        - "//*[contains(@class,'index-section')][.//*[normalize-space()='MOM']]"
+      user_btn:
+        - xpath
+        - "//*[contains(@class, 'icon icon-user')]"
+      cart_btn:
+        - xpath
+        - "//*[contains(@class, 'icon icon-bag-minimal')]"
+      search_btn:
+        - xpath
+        - "//*[contains(@class, 'site-nav small--hide')]"
+
+  collection:
+    url: https://mondressy.co.uk/collections/mother-of-the-bride-dresses
+    expected_keywords:
+      - mother
+      - bride
+    expected_count: 41
+    capture_exclude:
+      - product_grid
+    modules:
+      product_grid:
+        - css
+        - ".collection-grid__wrapper"
+      filter:
+        - xpath
+        - "(//*[contains(@class,'collection-filter')])[1]"
+      pagination:
+        - xpath
+        - "//*[contains(@class,'pagination')]"
+    product_card:
+      - css
+      - ".grid__item.grid-product"
+
+  product:
+    url: https://mondressy.co.uk/collections/mother-of-the-bride-dresses/products/sheath-column-off-the-shoulder-ankle-length-mother-of-the-bride-dresses-with-bowknot-mon2312490
+    expected_keywords:
+      - sheath
+      - column
+    require_reviews: false
+    capture_exclude:
+      - gallery
+      - info
+    modules:
+      gallery:
+        - xpath
+        - "//*[contains(@class,'product__photos')]"
+      info:
+        - xpath
+        - "//*[contains(@class,'product-single__meta')]"
+      add_to_cart:
+        - xpath
+        - "//button[@name='add' or contains(@class,'add-to-cart')]"
+    variant_inputs:
+      - xpath
+      - "//*[contains(@class,'variant')]//input"
