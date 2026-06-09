@@ -69,5 +69,30 @@ def hide_dynamic_elements(page, site_config=None, page_config=None):
                 }
             }
         });
+
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+        document.querySelectorAll('body *').forEach(function(el) {
+            const style = window.getComputedStyle(el);
+            if (style.position !== 'fixed') return;
+
+            const rect = el.getBoundingClientRect();
+            if (!rect.width || !rect.height) return;
+
+            const isSmallFloating =
+                rect.width <= 240
+                && rect.height <= 240
+                && rect.width < viewportWidth * 0.7
+                && (
+                    rect.left <= 96
+                    || viewportWidth - rect.right <= 96
+                    || viewportHeight - rect.bottom <= 160
+                );
+
+            if (isSmallFloating) {
+                el.style.setProperty('display', 'none', 'important');
+            }
+        });
         }
     """, hide_config)

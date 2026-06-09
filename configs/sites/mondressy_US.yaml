@@ -24,6 +24,8 @@ dynamic_hide:
     - buy it now
   text_contains:
     - pay with paypal
+    - afterpay
+    - as low as
 
 pages:
   home:
@@ -91,6 +93,7 @@ pages:
     url: https://www.mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613
     expected_keywords:
       - dress
+    require_reviews: false
     modules:
       gallery:
         - xpath
@@ -104,3 +107,6 @@ pages:
     variant_inputs:
       - xpath
       - "//*[contains(@class,'variant')]//input"
+    variant_gallery_options:
+      - xpath
+      - "//*[self::a or self::button][(contains(@class,'product__thumb') or contains(@class,'product-single__thumbnail')) and not(contains(@class,'product__thumb-arrow'))]"

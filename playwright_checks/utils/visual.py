@@ -3,12 +3,19 @@ import os
 import numpy as np
 from PIL import Image
 
+from playwright_checks.core.config_loader import load_settings
 from playwright_checks.core.test_results import add_result
 from playwright_checks.core.viewport import get_current_viewport_name
 
 
-CHANGE_THRESHOLD = 0.005
-WARNING_THRESHOLD = 0.02
+def _visual_setting(name, default):
+    settings = load_settings()
+    visual_settings = settings.get("visual", {})
+    return float(visual_settings.get(name, default))
+
+
+CHANGE_THRESHOLD = _visual_setting("change_threshold", 0.005)
+WARNING_THRESHOLD = _visual_setting("warning_threshold", 0.02)
 ALLOW_BASELINE_INIT = os.environ.get("ALLOW_BASELINE_INIT", "").lower() in (
     "1",
     "true",
@@ -194,10 +201,35 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
             )
             continue
 
-        if ratio < WARNING_THRESHOLD:
-            reason = "size changed" if details.get("size_mismatch") else "minor changed"
+        if details.get("size_mismatch"):
+            baseline_size = details.get("baseline_size")
+            current_size = details.get("current_size")
             print(
-                f"WARN [{name}] {reason} {ratio:.2%}; "
+                f"FAIL [{name}] size changed "
+                f"{baseline_size} -> {current_size}; "
+                "baseline was not updated"
+            )
+            failures.append(
+                f"visual [{name}] size changed "
+                f"{baseline_size} -> {current_size}"
+            )
+            add_result(
+                build_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    "failed",
+                    paths,
+                    ratio=ratio,
+                    details=details,
+                )
+            )
+            continue
+
+        if ratio < WARNING_THRESHOLD:
+            print(
+                f"WARN [{name}] minor changed {ratio:.2%}; "
                 "baseline was not updated"
             )
             add_result(

@@ -5,9 +5,11 @@ import time
 from PIL import Image
 from playwright.sync_api import Error as PlaywrightError
 
+from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import add_result, clear_results, write_results
 from playwright_checks.core.viewport import is_mobile_viewport
+from playwright_checks.pages.collection_page import CollectionPage
 from playwright_checks.utils.capture import (
     capture_modules,
     screenshot_element_with_retry,
@@ -19,70 +21,23 @@ from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
-    get_page_config,
-    load_site_config,
-    locate_element,
-    locator,
-    locator_map,
-    open_page_with_retry,
-    screenshot_root,
-    selector_for,
-    wait_for_page_load,
-    wait_for_visible,
 )
 from playwright_checks.utils.visual import build_result, process_results
 
 
 SUITE = "visual"
 PAGE = "collection"
-SITE_CONFIG = None
-PAGE_CONFIG = None
-URL = None
-SITE = None
-
-ROOT_DIR = None
-PAGE_DIR = None
-BASELINE_DIR = None
-CURRENT_DIR = None
-DIFF_DIR = None
-
-MODULES = {}
-PRODUCT_CARD = None
-EXPECTED_COUNT = None
-CAPTURE_EXCLUDE = set()
 
 
-def configure_context():
-    global SITE_CONFIG, PAGE_CONFIG, URL, SITE
-    global ROOT_DIR, PAGE_DIR, BASELINE_DIR, CURRENT_DIR, DIFF_DIR
-    global MODULES, PRODUCT_CARD, EXPECTED_COUNT, CAPTURE_EXCLUDE
-
-    SITE_CONFIG = load_site_config()
-    PAGE_CONFIG = get_page_config(PAGE, SITE_CONFIG)
-    URL = PAGE_CONFIG["url"]
-    SITE = SITE_CONFIG["site"]
-
-    ROOT_DIR = screenshot_root(SITE)
-    PAGE_DIR = os.path.join(ROOT_DIR, PAGE)
-    BASELINE_DIR = os.path.join(PAGE_DIR, "baseline")
-    CURRENT_DIR = os.path.join(PAGE_DIR, "current")
-    DIFF_DIR = os.path.join(PAGE_DIR, "diff")
-
-    MODULES = locator_map(PAGE_CONFIG["modules"])
-    PRODUCT_CARD = locator(PAGE_CONFIG["product_card"])
-    EXPECTED_COUNT = PAGE_CONFIG.get("expected_count")
-    CAPTURE_EXCLUDE = set(PAGE_CONFIG.get("capture_exclude", []))
+def get_product_cards(page_model):
+    return page_model.product_cards()
 
 
-def get_product_cards(page):
-    return page.locator(selector_for(PRODUCT_CARD))
-
-
-def scroll_to_load_all(page, timeout=10, max_scrolls=20):
+def scroll_to_load_all(page_model, timeout=10, max_scrolls=20):
     last_count = 0
     stable_count = 0
     end_time = time.time() + timeout
-    cards = get_product_cards(page)
+    cards = get_product_cards(page_model)
 
     for _ in range(max_scrolls):
         if time.time() > end_time:
@@ -103,7 +58,7 @@ def scroll_to_load_all(page, timeout=10, max_scrolls=20):
             last_count = current_count
 
         try:
-            page.evaluate("() => window.scrollBy(0, window.innerHeight)")
+            page_model.page.evaluate("() => window.scrollBy(0, window.innerHeight)")
         except PlaywrightError as e:
             print(f"scroll interrupted: {e}")
             return last_count
@@ -113,30 +68,23 @@ def scroll_to_load_all(page, timeout=10, max_scrolls=20):
     return last_count
 
 
-def wait_for_collection_page(page):
-    wait_for_page_load(page, label="PLP")
-    wait_for_visible(page, MODULES["product_grid"])
-    wait_for_visible(page, MODULES["filter"])
-    get_product_cards(page).first.wait_for(state="visible", timeout=45000)
-
-
-def check_product_count(page):
+def check_product_count(page_model):
     print("\nProduct count checks")
     failures = []
 
-    scroll_to_load_all(page, timeout=15)
-    count = get_product_cards(page).count()
+    scroll_to_load_all(page_model, timeout=15)
+    count = get_product_cards(page_model).count()
 
-    if EXPECTED_COUNT is None:
+    if page_model.expected_count is None:
         print(f"product count: {count} (expected_count not configured, skipped)")
         return failures
 
-    if count == EXPECTED_COUNT:
+    if count == page_model.expected_count:
         print(f"OK product count: {count}")
     else:
-        print(f"FAIL product count: {count}, expected {EXPECTED_COUNT}")
+        print(f"FAIL product count: {count}, expected {page_model.expected_count}")
         failures.append(
-            f"product count mismatch: actual {count}, expected {EXPECTED_COUNT}"
+            f"product count mismatch: actual {count}, expected {page_model.expected_count}"
         )
 
     return failures
@@ -204,8 +152,8 @@ def prepare_card_compare_images(paths):
     paths["compare_current"] = compare_current
 
 
-def get_product_card_by_index(page, index):
-    cards = get_product_cards(page)
+def get_product_card_by_index(page_model, index):
+    cards = get_product_cards(page_model)
     count = cards.count()
 
     if index >= count:
@@ -216,13 +164,13 @@ def get_product_card_by_index(page, index):
     return card
 
 
-def capture_card_image_stable(page, index, output_path, hover=False):
+def capture_card_image_stable(ctx, page_model, index, output_path, hover=False):
     def locate():
-        return get_product_card_by_index(page, index)
+        return get_product_card_by_index(page_model, index)
 
     def prepare(card):
         scroll_to_center(card)
-        hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
+        hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
 
         if not wait_for_images(card, timeout=10):
             raise Exception("wait for images timeout")
@@ -232,7 +180,7 @@ def capture_card_image_stable(page, index, output_path, hover=False):
 
         card = locate()
         scroll_to_center(card)
-        hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
+        hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
 
         if hover:
             card.hover(timeout=10000)
@@ -247,17 +195,17 @@ def capture_card_image_stable(page, index, output_path, hover=False):
     )
 
 
-def capture_product_cards(page):
+def capture_product_cards(ctx, page_model):
     print("\nProduct card screenshots")
     results = {}
-    card_count = min(8, get_product_cards(page).count())
+    card_count = min(8, get_product_cards(page_model).count())
 
     for index in range(card_count):
         name = f"product_{index}"
-        paths = build_paths(CURRENT_DIR, BASELINE_DIR, DIFF_DIR, name)
+        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
 
         try:
-            metrics = capture_card_image_stable(page, index, paths["current"])
+            metrics = capture_card_image_stable(ctx, page_model, index, paths["current"])
             paths.update(metrics)
             prepare_card_compare_images(paths)
             results[name] = paths
@@ -269,7 +217,7 @@ def capture_product_cards(page):
     return results
 
 
-def capture_hover_cards(page):
+def capture_hover_cards(ctx, page_model):
     print("\nHover screenshots")
     results = {}
 
@@ -277,15 +225,16 @@ def capture_hover_cards(page):
         print("mobile viewport: hover screenshots skipped")
         return results
 
-    card_count = min(8, get_product_cards(page).count())
+    card_count = min(8, get_product_cards(page_model).count())
 
     for index in range(card_count):
         name = f"hover_{index}"
-        paths = build_paths(CURRENT_DIR, BASELINE_DIR, DIFF_DIR, name)
+        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
 
         try:
             metrics = capture_card_image_stable(
-                page,
+                ctx,
+                page_model,
                 index,
                 paths["current"],
                 hover=True
@@ -302,47 +251,46 @@ def capture_hover_cards(page):
 
 
 def run():
-    configure_context()
+    ctx = PageCheckContext(PAGE, suite=SUITE)
     failures = []
-    create_dirs(BASELINE_DIR, CURRENT_DIR, DIFF_DIR)
+    create_dirs(ctx.baseline_dir, ctx.current_dir, ctx.diff_dir)
     playwright = browser = context = page = None
 
     try:
         playwright, browser, context, page = init_browser()
-        open_page_with_retry(page, URL, wait_for_collection_page, "PLP")
+        page_model = CollectionPage(page, site_config=ctx.site_config)
+        page_model.open()
         time.sleep(2)
+        page_model.wait_until_ready()
 
-        failures.extend(dom_check(page, MODULES))
-        failures.extend(check_product_count(page))
+        failures.extend(dom_check(page, page_model.modules))
+        failures.extend(check_product_count(page_model))
 
-        hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
+        hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
 
-        module_locators = {
-            name: module_locator
-            for name, module_locator in MODULES.items()
-            if name not in CAPTURE_EXCLUDE
-        }
         module_results = capture_modules(
             page,
-            module_locators,
-            CURRENT_DIR,
-            BASELINE_DIR,
-            DIFF_DIR,
+            ctx.module_locators_for_capture(),
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
             require_reviews=False,
-            site_config=SITE_CONFIG,
-            page_config=PAGE_CONFIG
+            site_config=ctx.site_config,
+            page_config=ctx.page_config
         )
-        product_results = capture_product_cards(page)
-        hover_results = capture_hover_cards(page)
+        product_results = capture_product_cards(ctx, page_model)
+        hover_results = capture_hover_cards(ctx, page_model)
 
-        failures.extend(process_results(module_results, SITE, SUITE, PAGE))
-        failures.extend(process_results(product_results, SITE, SUITE, PAGE))
-        failures.extend(process_results(hover_results, SITE, SUITE, PAGE))
+        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(process_results(product_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(process_results(hover_results, ctx.site, ctx.suite, ctx.page_name))
 
     except Exception as e:
         error = f"Playwright runtime error: {type(e).__name__}: {e}"
         failures.append(f"PLP: {error}")
-        add_result(build_result(SITE, SUITE, PAGE, "runtime", "failed", None, error=error))
+        add_result(
+            build_result(ctx.site, ctx.suite, ctx.page_name, "runtime", "failed", None, error=error)
+        )
     finally:
         close_browser(playwright, browser, context)
 

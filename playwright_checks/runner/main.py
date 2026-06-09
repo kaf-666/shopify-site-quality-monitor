@@ -3,7 +3,7 @@ import sys
 from playwright_checks.checks.collection_check import run as run_collection
 from playwright_checks.checks.home_check import run as run_home
 from playwright_checks.checks.product_check import run as run_product
-from playwright_checks.core.test_results import clear_results, write_results
+from playwright_checks.core.test_results import clear_results, drop_results, write_results
 from playwright_checks.core.viewport import get_run_viewport_names, set_current_viewport
 
 
@@ -17,6 +17,33 @@ def print_failure_summary(failures):
 
 def with_viewport(failures, viewport_name):
     return [f"[{viewport_name}] {failure}" for failure in failures]
+
+
+def should_retry_page(failures):
+    retry_patterns = (
+        "Timeout",
+        "capture failed",
+        "DOM [",
+        "runtime error",
+        "not found",
+        "not ready",
+    )
+    return any(
+        any(pattern in failure for pattern in retry_patterns)
+        for failure in failures
+    )
+
+
+def run_page(label, page_name, run_func, viewport_name):
+    print(f"\n{label} checks")
+    failures = run_func()
+
+    if failures and should_retry_page(failures):
+        print(f"\n{label} checks retry after transient failure")
+        drop_results(viewport=viewport_name, page=page_name)
+        failures = run_func()
+
+    return with_viewport(failures, viewport_name)
 
 
 def run_all():
@@ -35,14 +62,9 @@ def run_all():
         print(f"Viewport: {viewport_name}")
         print("-" * 50)
 
-        print("\nHome checks")
-        failures.extend(with_viewport(run_home(), viewport_name))
-
-        print("\nPLP checks")
-        failures.extend(with_viewport(run_collection(), viewport_name))
-
-        print("\nPDP checks")
-        failures.extend(with_viewport(run_product(), viewport_name))
+        failures.extend(run_page("Home", "home", run_home, viewport_name))
+        failures.extend(run_page("PLP", "collection", run_collection, viewport_name))
+        failures.extend(run_page("PDP", "product", run_product, viewport_name))
 
     results_file = write_results()
     print(f"\nVisual test results: {results_file}")

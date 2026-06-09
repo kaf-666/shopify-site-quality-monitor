@@ -174,7 +174,8 @@ def capture_modules(
     diff_dir,
     require_reviews=True,
     site_config=None,
-    page_config=None
+    page_config=None,
+    before_capture=None
 ):
     print("\nModule screenshots")
     results = {}
@@ -193,6 +194,8 @@ def capture_modules(
         def prepare(element):
             scroll_to_center(element)
             hide_dynamic_elements(page, site_config, page_config)
+            if before_capture:
+                before_capture(name, page, element)
             wait_for_capture_ready(
                 page,
                 element,
@@ -201,6 +204,8 @@ def capture_modules(
             )
             time.sleep(1)
             hide_dynamic_elements(page, site_config, page_config)
+            if before_capture:
+                before_capture(name, page, element)
 
         try:
             metrics = screenshot_element_with_retry(

@@ -10,6 +10,10 @@ class CollectionPage(BasePage):
     def product_card_locator(self):
         return locator(self.config["product_card"])
 
+    @property
+    def expected_count(self):
+        return self.config.get("expected_count")
+
     def product_cards(self):
         return self.page.locator(selector_for(self.product_card_locator))
 

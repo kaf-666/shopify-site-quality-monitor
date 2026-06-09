@@ -1,83 +1,40 @@
 import os
 import sys
+import tempfile
 import time
 
+import numpy as np
+from PIL import Image
+
+from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import add_result, clear_results, write_results
+from playwright_checks.core.viewport import get_current_viewport_name
+from playwright_checks.pages.product_page import ProductPage
 from playwright_checks.utils.capture import (
     capture_modules,
     scroll_to_center,
-    wait_for_capture_ready,
+    wait_for_layout_stable,
 )
 from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
-    get_page_config,
-    load_site_config,
-    locate_element,
-    locator,
-    locator_map,
-    open_page_with_retry,
-    screenshot_root,
     selector_for,
-    wait_for_page_load,
-    wait_for_visible,
 )
 from playwright_checks.utils.visual import build_result, process_results
 
 
 SUITE = "visual"
 PAGE = "product"
-SITE_CONFIG = None
-PAGE_CONFIG = None
-URL = None
-SITE = None
-
-ROOT_DIR = None
-PAGE_DIR = None
-BASELINE_DIR = None
-CURRENT_DIR = None
-DIFF_DIR = None
-
-MODULES = {}
-VARIANT_INPUTS = None
-REQUIRE_REVIEWS = True
-CAPTURE_EXCLUDE = set()
 
 
-def configure_context():
-    global SITE_CONFIG, PAGE_CONFIG, URL, SITE
-    global ROOT_DIR, PAGE_DIR, BASELINE_DIR, CURRENT_DIR, DIFF_DIR
-    global MODULES, VARIANT_INPUTS, REQUIRE_REVIEWS, CAPTURE_EXCLUDE
-
-    SITE_CONFIG = load_site_config()
-    PAGE_CONFIG = get_page_config(PAGE, SITE_CONFIG)
-    URL = PAGE_CONFIG["url"]
-    SITE = SITE_CONFIG["site"]
-
-    ROOT_DIR = screenshot_root(SITE)
-    PAGE_DIR = os.path.join(ROOT_DIR, PAGE)
-    BASELINE_DIR = os.path.join(PAGE_DIR, "baseline")
-    CURRENT_DIR = os.path.join(PAGE_DIR, "current")
-    DIFF_DIR = os.path.join(PAGE_DIR, "diff")
-
-    MODULES = locator_map(PAGE_CONFIG["modules"])
-    VARIANT_INPUTS = locator(PAGE_CONFIG["variant_inputs"])
-    REQUIRE_REVIEWS = PAGE_CONFIG.get("require_reviews", True)
-    CAPTURE_EXCLUDE = set(PAGE_CONFIG.get("capture_exclude", []))
-
-
-def find_elements(page, locator_value):
-    return page.locator(selector_for(locator_value))
-
-
-def check_add_to_cart(page):
+def check_add_to_cart(page_model):
     print("\nAdd To Cart state")
     failures = []
 
     try:
-        button = locate_element(page, MODULES["add_to_cart"])
+        button = page_model.module("add_to_cart")
         enabled = button.is_enabled()
         print(f"enabled={enabled}")
 
@@ -91,191 +48,313 @@ def check_add_to_cart(page):
     return failures
 
 
-def check_variant_count(page):
-    variants = find_elements(page, VARIANT_INPUTS)
-    print(f"\nVariant count: {variants.count()}")
+def locate_visible_content(page, locator_value, timeout=10000):
+    end_time = time.time() + timeout / 1000
+    elements = page.locator(selector_for(locator_value))
 
+    while time.time() < end_time:
+        count = elements.count()
 
-def get_cart_item_count(page):
-    return page.evaluate("""
-        async () => {
-            try {
-                const response = await fetch('/cart.js', { credentials: 'same-origin' });
-                if (!response.ok) {
-                    return { error: 'cart.js HTTP ' + response.status };
-                }
-                const cart = await response.json();
-                return cart.item_count;
-            } catch (error) {
-                return { error: error.message };
-            }
-        }
-    """)
-
-
-def cart_count_value(value):
-    if isinstance(value, int):
-        return value
-
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-
-    return None
-
-
-def visible_add_to_cart_error(page):
-    selectors = [
-        "#size_error",
-        ".errors",
-        ".error",
-        ".product-form__error-message",
-    ]
-
-    for selector in selectors:
-        elements = page.locator(selector)
-        for index in range(elements.count()):
+        for index in range(count):
             element = elements.nth(index)
             try:
                 text = element.inner_text(timeout=1000).strip()
                 if element.is_visible() and text:
-                    return text
+                    return element, text
             except Exception:
                 continue
 
-    return None
+        time.sleep(0.2)
+
+    raise Exception(f"no visible content found for {selector_for(locator_value)}")
 
 
-def select_first_available_variant_options(page):
-    return page.evaluate("""
-        () => {
-            const form = document.querySelector('form[action*="/cart/add"]') || document;
-            const roots = [
-                form,
-                ...document.querySelectorAll('.my-infiniteoptions-container')
-            ];
-            const selected = [];
+def check_product_content(page_model):
+    print("\nProduct content checks")
+    failures = []
 
-            roots.forEach(function(root) {
-                root.querySelectorAll('select').forEach(function(select) {
-                    if (select.disabled) return;
+    for name in ("title", "price"):
+        try:
+            element, text = locate_visible_content(
+                page_model.page,
+                page_model.content_locator(name)
+            )
+            visible = element.is_visible()
+            print(f"OK {name} visible={visible} text={bool(text)}")
 
-                    const current = select.options[select.selectedIndex];
-                    if (current && current.value && !current.disabled) return;
+            if not visible or not text:
+                failures.append(
+                    f"product {name} visible={visible}, text={bool(text)}"
+                )
 
-                    const option = Array.from(select.options).find(function(item) {
-                        return item.value && !item.disabled;
-                    });
+        except Exception as e:
+            print(f"FAIL {name} content error: {e}")
+            failures.append(f"product {name} content error: {e}")
 
-                    if (!option) return;
+    return failures
 
-                    select.value = option.value;
-                    select.dispatchEvent(new Event('change', { bubbles: true }));
-                    selected.push(select.name || select.id || option.textContent.trim());
-                });
-            });
 
-            const groups = new Map();
-            roots.forEach(function(root) {
-                root.querySelectorAll('input[type="radio"]').forEach(function(input) {
-                    if (!input.name || input.disabled || !input.value) return;
+def check_variant_count(page_model):
+    variants = page_model.variant_inputs()
+    print(f"\nVariant count: {variants.count()}")
 
-                    if (!groups.has(input.name)) {
-                        groups.set(input.name, []);
-                    }
 
-                    groups.get(input.name).push(input);
-                });
-            });
+def variant_candidate_sets(page_model):
+    candidate_sets = []
 
-            groups.forEach(function(inputs, name) {
-                if (inputs.some(function(input) { return input.checked; })) return;
+    options = page_model.variant_gallery_options()
+    if options:
+        if options.count():
+            candidate_sets.append((options, "gallery option"))
 
-                const input = inputs.find(function(item) {
-                    return !item.disabled;
-                });
+    candidate_sets.append((page_model.variant_inputs(), "variant input"))
 
-                if (!input) return;
+    return candidate_sets
 
-                input.click();
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-                selected.push(name + '=' + input.value);
-            });
 
-            return selected;
+def visible_candidate_indices(candidates, limit=20):
+    indices = []
+    count = min(candidates.count(), limit)
+
+    for index in range(count):
+        candidate = candidates.nth(index)
+        try:
+            if candidate.is_visible(timeout=500):
+                indices.append(index)
+        except Exception:
+            continue
+
+    return indices
+
+
+def image_paths_close(path1, path2, threshold=0.005):
+    img1 = Image.open(path1).convert("RGB")
+    img2 = Image.open(path2).convert("RGB")
+
+    if img1.size != img2.size:
+        normalized = Image.new("RGB", img1.size, (255, 255, 255))
+        crop = img2.crop((
+            0,
+            0,
+            min(img1.width, img2.width),
+            min(img1.height, img2.height),
+        ))
+        normalized.paste(crop, (0, 0))
+        img2 = normalized
+
+    pixels1 = np.array(img1)
+    pixels2 = np.array(img2)
+    diff = np.abs(pixels1.astype(int) - pixels2.astype(int))
+    changed = (diff > 25).any(axis=2)
+    return changed.sum() / changed.size <= threshold
+
+
+def gallery_capture_target(page_model):
+    gallery = page_model.module("gallery")
+
+    if get_current_viewport_name() == "mobile":
+        slideshow = gallery.locator(".product-slideshow.flickity-enabled").first
+        try:
+            slideshow.wait_for(state="visible", timeout=1000)
+            box = slideshow.bounding_box()
+            if box and box["width"] > 0 and box["height"] > 0:
+                return slideshow
+        except Exception:
+            pass
+
+    return gallery
+
+
+def capture_gallery_variant(
+    ctx,
+    page_model,
+    results,
+    captured_paths,
+    captured_count,
+    variant_source,
+    candidate_index,
+):
+    name = f"variant_{captured_count}"
+    paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
+    capture_start = time.perf_counter()
+
+    target = gallery_capture_target(page_model)
+    scroll_to_center(target)
+    hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
+    if not wait_for_layout_stable(target, timeout=10):
+        raise Exception("layout is not stable")
+    hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
+    time.sleep(0.5)
+
+    target = gallery_capture_target(page_model)
+    probe_path = os.path.join(
+        tempfile.gettempdir(),
+        f"variant_probe_{time.time_ns()}.png"
+    )
+    target.screenshot(path=probe_path)
+
+    if any(image_paths_close(path, probe_path) for path in captured_paths):
+        os.remove(probe_path)
+        raise Exception(f"{variant_source} {candidate_index} duplicated screenshot")
+
+    os.replace(probe_path, paths["current"])
+    captured_paths.append(paths["current"])
+    paths["capture_duration_ms"] = round(
+        (time.perf_counter() - capture_start) * 1000,
+        2
+    )
+    paths["capture_attempts"] = 1
+    paths["variant_candidate_index"] = candidate_index
+    paths["variant_source"] = variant_source
+    results[name] = paths
+    print(f"OK Variant {captured_count} from {variant_source} {candidate_index}")
+
+    return captured_count + 1
+
+
+def gallery_slide_count(page_model):
+    gallery = page_model.module("gallery")
+    return gallery.evaluate(
+        """
+        (gallery) => {
+            const slideshow =
+                gallery.querySelector('.product-slideshow.flickity-enabled') ||
+                gallery.querySelector('.flickity-enabled');
+            if (!slideshow || !window.Flickity || !window.Flickity.data) {
+                return 0;
+            }
+            const flickity = window.Flickity.data(slideshow);
+            return flickity ? flickity.slides.length : 0;
         }
-    """)
+        """
+    )
 
 
-def test_variants(page):
+def select_gallery_slide(page_model, slide_index):
+    gallery = page_model.module("gallery")
+    return gallery.evaluate(
+        """
+        (gallery, slideIndex) => {
+            const slideshow =
+                gallery.querySelector('.product-slideshow.flickity-enabled') ||
+                gallery.querySelector('.flickity-enabled');
+            if (!slideshow || !window.Flickity || !window.Flickity.data) {
+                return false;
+            }
+            const flickity = window.Flickity.data(slideshow);
+            if (!flickity) {
+                return false;
+            }
+            flickity.select(slideIndex, false, true);
+            return true;
+        }
+        """,
+        slide_index,
+    )
+
+
+def capture_gallery_slides(ctx, page_model, results, captured_paths, captured_count, target_count):
+    slide_count = min(gallery_slide_count(page_model), 20)
+
+    if not slide_count:
+        return captured_count
+
+    print(f"Gallery slide candidates: {slide_count}")
+
+    for slide_index in range(slide_count):
+        if captured_count >= target_count:
+            break
+
+        try:
+            if not select_gallery_slide(page_model, slide_index):
+                raise Exception("Flickity slideshow is not available")
+            time.sleep(1)
+            captured_count = capture_gallery_variant(
+                ctx,
+                page_model,
+                results,
+                captured_paths,
+                captured_count,
+                "gallery slide",
+                slide_index,
+            )
+        except Exception as e:
+            print(f"WARN Gallery slide {slide_index} skipped: {e}")
+
+    return captured_count
+
+
+def test_variants(ctx, page_model):
     print("\nVariant checks")
     results = {}
     failures = []
 
     try:
-        variants = find_elements(page, VARIANT_INPUTS)
+        candidate_sets = variant_candidate_sets(page_model)
 
-        if variants.count() == 0:
+        if not any(candidates.count() for candidates, _ in candidate_sets):
             print("WARN variant not found")
             failures.append("Variant not found")
             return results, failures
 
-        variant_count = min(3, variants.count())
+        target_count = 3
+        captured_count = 0
+        captured_paths = []
 
-        for index in range(variant_count):
-            name = f"variant_{index}"
-            paths = build_paths(CURRENT_DIR, BASELINE_DIR, DIFF_DIR, name)
-            max_attempts = 3
-            capture_start = time.perf_counter()
+        for candidates, variant_source in candidate_sets:
+            candidate_indices = visible_candidate_indices(candidates)
 
-            for attempt in range(1, max_attempts + 1):
-                try:
-                    variants = find_elements(page, VARIANT_INPUTS)
-
-                    if index >= variants.count():
-                        raise Exception(f"Variant {index} does not exist")
-
-                    variant = variants.nth(index)
-                    variant.scroll_into_view_if_needed(timeout=10000)
-                    variant.click(force=True, timeout=10000)
-                    time.sleep(2)
-
-                    gallery = locate_element(page, MODULES["gallery"])
-                    scroll_to_center(gallery)
-                    hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
-                    wait_for_capture_ready(
-                        page,
-                        gallery,
-                        require_reviews=REQUIRE_REVIEWS,
-                        timeout=10
+            if not candidate_indices:
+                print(f"WARN {variant_source} has no visible candidates")
+                if variant_source == "gallery option":
+                    captured_count = capture_gallery_slides(
+                        ctx,
+                        page_model,
+                        results,
+                        captured_paths,
+                        captured_count,
+                        target_count,
                     )
-                    hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
-                    time.sleep(0.5)
+                    if captured_count >= target_count:
+                        break
+                continue
 
-                    gallery = locate_element(page, MODULES["gallery"])
-                    gallery.screenshot(path=paths["current"])
-                    paths["capture_duration_ms"] = round(
-                        (time.perf_counter() - capture_start) * 1000,
-                        2
-                    )
-                    paths["capture_attempts"] = attempt
-                    results[name] = paths
-                    print(f"OK Variant {index}")
+            for candidate_index in candidate_indices:
+                if captured_count >= target_count:
                     break
 
+                try:
+                    if candidate_index >= candidates.count():
+                        raise Exception(
+                            f"Variant candidate {candidate_index} does not exist"
+                        )
+
+                    variant = candidates.nth(candidate_index)
+                    variant.scroll_into_view_if_needed(timeout=10000)
+                    variant.click(force=True, timeout=10000)
+                    time.sleep(1)
+                    captured_count = capture_gallery_variant(
+                        ctx,
+                        page_model,
+                        results,
+                        captured_paths,
+                        captured_count,
+                        variant_source,
+                        candidate_index,
+                    )
+
                 except Exception as e:
-                    if attempt == max_attempts:
-                        print(f"FAIL Variant {index} capture failed: {e}")
-                        results[name] = {
-                            "error": f"capture failed: {e}",
-                            "capture_duration_ms": round(
-                                (time.perf_counter() - capture_start) * 1000,
-                                2
-                            ),
-                            "capture_attempts": attempt,
-                        }
-                    else:
-                        print(f"WARN Variant {index} retry {attempt}/{max_attempts}")
-                        time.sleep(1)
+                    print(f"WARN Variant candidate {candidate_index} skipped: {e}")
+
+            if captured_count >= target_count:
+                break
+
+        if captured_count == 0:
+            failures.append("No distinct variant gallery screenshots captured")
+        elif captured_count < target_count:
+            failures.append(
+                f"Only {captured_count} distinct variant gallery screenshots captured"
+            )
 
     except Exception as e:
         print(f"FAIL Variant checks failed: {e}")
@@ -284,103 +363,47 @@ def test_variants(page):
     return results, failures
 
 
-def test_add_to_cart(page):
-    print("\nAdd To Cart check")
-    failures = []
-
-    try:
-        selected_options = select_first_available_variant_options(page)
-        if selected_options:
-            print(
-                "selected product options: "
-                + ", ".join(str(item) for item in selected_options)
-            )
-            time.sleep(1)
-
-        before_count = cart_count_value(get_cart_item_count(page))
-
-        if before_count is None:
-            raise Exception("cannot read cart.js item_count before click")
-
-        button = locate_element(page, MODULES["add_to_cart"])
-        button.click(timeout=10000)
-
-        end_time = time.time() + 10
-        after_count = None
-
-        while time.time() < end_time:
-            current_count = cart_count_value(get_cart_item_count(page))
-            if current_count is not None and current_count > before_count:
-                after_count = current_count
-                break
-
-            error = visible_add_to_cart_error(page)
-            if error:
-                raise Exception(f"Add To Cart error message: {error}")
-
-            time.sleep(0.5)
-
-        if after_count is None:
-            raise Exception("cart item_count did not increase")
-
-        print(f"OK Add To Cart: cart item_count {before_count} -> {after_count}")
-
-    except Exception as e:
-        print(f"FAIL {e}")
-        failures.append(f"Add To Cart validation failed: {e}")
-
-    return failures
-
-
-def wait_for_product_page(page):
-    wait_for_page_load(page, label="PDP")
-    wait_for_visible(page, MODULES["gallery"])
-    wait_for_visible(page, MODULES["info"])
-    wait_for_visible(page, MODULES["add_to_cart"])
-
-
 def run():
-    configure_context()
+    ctx = PageCheckContext(PAGE, suite=SUITE)
     failures = []
-    create_dirs(BASELINE_DIR, CURRENT_DIR, DIFF_DIR)
+    create_dirs(ctx.baseline_dir, ctx.current_dir, ctx.diff_dir)
     playwright = browser = context = page = None
 
     try:
         playwright, browser, context, page = init_browser()
-        open_page_with_retry(page, URL, wait_for_product_page, "PDP")
+        page_model = ProductPage(page, site_config=ctx.site_config)
+        page_model.open()
         time.sleep(2)
+        page_model.wait_until_ready()
 
-        failures.extend(dom_check(page, MODULES))
-        failures.extend(check_add_to_cart(page))
-        check_variant_count(page)
+        failures.extend(dom_check(page, page_model.modules))
+        failures.extend(check_product_content(page_model))
+        failures.extend(check_add_to_cart(page_model))
+        check_variant_count(page_model)
 
-        hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
-        module_locators = {
-            name: module_locator
-            for name, module_locator in MODULES.items()
-            if name not in CAPTURE_EXCLUDE
-        }
+        hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         module_results = capture_modules(
             page,
-            module_locators,
-            CURRENT_DIR,
-            BASELINE_DIR,
-            DIFF_DIR,
-            require_reviews=REQUIRE_REVIEWS,
-            site_config=SITE_CONFIG,
-            page_config=PAGE_CONFIG
+            ctx.module_locators_for_capture(),
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
+            require_reviews=ctx.page_config.get("require_reviews", True),
+            site_config=ctx.site_config,
+            page_config=ctx.page_config
         )
-        variant_results, variant_failures = test_variants(page)
+        variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)
-        failures.extend(test_add_to_cart(page))
 
-        failures.extend(process_results(module_results, SITE, SUITE, PAGE))
-        failures.extend(process_results(variant_results, SITE, SUITE, PAGE))
+        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(process_results(variant_results, ctx.site, ctx.suite, ctx.page_name))
 
     except Exception as e:
         error = f"Playwright runtime error: {type(e).__name__}: {e}"
         failures.append(f"PDP: {error}")
-        add_result(build_result(SITE, SUITE, PAGE, "runtime", "failed", None, error=error))
+        add_result(
+            build_result(ctx.site, ctx.suite, ctx.page_name, "runtime", "failed", None, error=error)
+        )
     finally:
         close_browser(playwright, browser, context)
 

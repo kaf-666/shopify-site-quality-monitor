@@ -132,6 +132,9 @@ def open_page_with_retry(page, url, wait_until_ready, label="page", attempts=3, 
             page.goto(url, wait_until="domcontentloaded", timeout=45000)
             assert_page_not_blocked(page)
             wait_until_ready(page)
+            time.sleep(1)
+            assert_page_not_blocked(page)
+            wait_until_ready(page)
             return
         except AccessBlockedError:
             raise

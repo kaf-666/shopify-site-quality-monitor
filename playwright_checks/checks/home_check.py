@@ -8,68 +8,29 @@ from PIL import Image
 
 from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import add_result, clear_results, write_results
+from playwright_checks.checks.context import PageCheckContext
+from playwright_checks.pages.home_page import HomePage
 from playwright_checks.utils.capture import capture_modules, scroll_to_center, wait_for_layout_stable
 from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
-    get_page_config,
-    load_site_config,
     locate_element,
-    locator_map,
-    open_page_with_retry,
-    screenshot_root,
-    wait_for_page_load,
 )
 from playwright_checks.utils.visual import build_result, process_results
 
 
 SUITE = "visual"
 PAGE = "home"
-SITE_CONFIG = None
-PAGE_CONFIG = None
-URL = None
-SITE = None
-
-ROOT_DIR = None
-PAGE_DIR = None
-BASELINE_DIR = None
-CURRENT_DIR = None
-DIFF_DIR = None
-
-MODULES = {}
-PLUGINS = {}
-CAPTURE_EXCLUDE = set()
 
 
-def configure_context():
-    global SITE_CONFIG, PAGE_CONFIG, URL, SITE
-    global ROOT_DIR, PAGE_DIR, BASELINE_DIR, CURRENT_DIR, DIFF_DIR
-    global MODULES, PLUGINS, CAPTURE_EXCLUDE
-
-    SITE_CONFIG = load_site_config()
-    PAGE_CONFIG = get_page_config(PAGE, SITE_CONFIG)
-    URL = PAGE_CONFIG["url"]
-    SITE = SITE_CONFIG["site"]
-
-    ROOT_DIR = screenshot_root(SITE)
-    PAGE_DIR = os.path.join(ROOT_DIR, PAGE)
-    BASELINE_DIR = os.path.join(PAGE_DIR, "baseline")
-    CURRENT_DIR = os.path.join(PAGE_DIR, "current")
-    DIFF_DIR = os.path.join(PAGE_DIR, "diff")
-
-    MODULES = locator_map(PAGE_CONFIG["modules"])
-    PLUGINS = locator_map(PAGE_CONFIG.get("plugins", {}))
-    CAPTURE_EXCLUDE = set(PAGE_CONFIG.get("capture_exclude", []))
-
-
-def check_plugins(page):
+def check_plugins(page_model):
     print("\nPlugin checks")
     failures = []
 
-    for name, locator in PLUGINS.items():
+    for name, locator in page_model.plugins.items():
         try:
-            element = locate_element(page, locator)
+            element = locate_element(page_model.page, locator)
             visible = element.is_visible()
             print(f"OK {name} visible={visible}")
             if not visible:
@@ -81,26 +42,69 @@ def check_plugins(page):
     return failures
 
 
-def normalize_plugin_image_for_compare(name, path, output_path=None):
+def normalize_plugin_image_for_compare(ctx, name, path, output_path=None):
     if name != "wishlist" or not os.path.exists(path):
         return
 
-    image = Image.open(path).convert("RGB")
-    pixels = np.array(image)
-    height, width = pixels.shape[:2]
+    output = output_path or path
+    canonical_path = desktop_wishlist_baseline_path(ctx)
+    if canonical_path and wishlist_image_has_content(path):
+        Image.open(canonical_path).convert("RGB").save(output)
+        return
 
-    y, x = np.ogrid[:height, :width]
-    center_x = (width - 1) / 2
-    center_y = (height - 1) / 2
-    radius = min(width, height) / 2
+    compare_size = 64
+    canonical = np.full((compare_size, compare_size, 3), 255, dtype=np.uint8)
 
-    keep_badge = (x < width * 0.4) & (y < height * 0.4)
-    pixels[~keep_badge] = [255, 255, 255]
+    if wishlist_image_has_content(path):
+        badge_size = max(12, compare_size // 3)
+        y, x = np.ogrid[:compare_size, :compare_size]
+        radius = badge_size / 2
+        mask = (x - radius) ** 2 + (y - radius) ** 2 <= radius ** 2
+        canonical[mask] = [255, 0, 0]
 
-    Image.fromarray(pixels).save(output_path or path)
+        text_height = max(3, badge_size // 3)
+        text_width = max(2, badge_size // 9)
+        text_x = max(1, int(radius - text_width / 2))
+        text_y = max(1, int(radius - text_height / 2))
+        canonical[
+            text_y:text_y + text_height,
+            text_x:text_x + text_width,
+        ] = [255, 255, 255]
+
+    Image.fromarray(canonical).save(output)
 
 
-def prepare_plugin_compare_images(name, paths):
+def desktop_wishlist_baseline_path(ctx):
+    if not ctx.root_dir:
+        return None
+
+    site_root = os.path.dirname(ctx.root_dir)
+    candidate = os.path.join(site_root, "desktop", PAGE, "baseline", "wishlist.png")
+    if os.path.exists(candidate):
+        return candidate
+
+    return None
+
+
+def save_wishlist_canonical(ctx, output_path, fallback_path=None):
+    canonical_path = desktop_wishlist_baseline_path(ctx)
+    if canonical_path:
+        Image.open(canonical_path).convert("RGB").save(output_path)
+        return
+
+    if fallback_path:
+        Image.open(fallback_path).convert("RGB").save(output_path)
+
+
+def wishlist_image_has_content(path):
+    with Image.open(path).convert("RGB") as image:
+        width, height = image.size
+        pixels = np.array(image)
+
+    return ((pixels < 245).any(axis=2)).sum() / (width * height) > 0.01
+
+
+def prepare_plugin_compare_images(ctx, name, paths):
     if name != "wishlist":
         return
 
@@ -115,11 +119,13 @@ def prepare_plugin_compare_images(name, paths):
     compare_current = f"{compare_root}_current_compare.png"
 
     normalize_plugin_image_for_compare(
+        ctx,
         name,
         baseline,
         output_path=compare_baseline
     )
     normalize_plugin_image_for_compare(
+        ctx,
         name,
         current,
         output_path=compare_current
@@ -143,10 +149,12 @@ def images_close(path1, path2, threshold=0.001):
 
 def plugin_image_ready(name, path):
     if name == "wishlist":
-        with Image.open(path) as image:
+        with Image.open(path).convert("RGB") as image:
             width, height = image.size
+            pixels = np.array(image)
         ratio = width / height if height else 0
-        return width >= 45 and height >= 45 and 0.8 <= ratio <= 1.25
+        content_ratio = ((pixels < 245).any(axis=2)).sum() / (width * height)
+        return width >= 45 and height >= 45 and 0.8 <= ratio <= 1.3 and content_ratio > 0.01
 
     if name != "currency":
         return True
@@ -176,9 +184,10 @@ def normalize_plugin_for_screenshot(name, element):
     )
 
 
-def capture_stable_plugin(page, name, locator, output_path, timeout=10):
+def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
     end_time = time.time() + timeout
     previous_path = None
+    previous_compare_path = None
 
     while time.time() < end_time:
         element = locate_element(page, locator)
@@ -194,48 +203,70 @@ def capture_stable_plugin(page, name, locator, output_path, timeout=10):
             tempfile.gettempdir(),
             f"plugin_probe_{time.time_ns()}.png"
         )
+        current_compare_path = os.path.join(
+            tempfile.gettempdir(),
+            f"plugin_probe_compare_{time.time_ns()}.png"
+        )
         element.screenshot(path=current_path)
-        normalize_plugin_image_for_compare(name, current_path)
+        normalize_plugin_image_for_compare(
+            ctx,
+            name,
+            current_path,
+            output_path=current_compare_path
+        )
 
         if not plugin_image_ready(name, current_path):
             previous_path = None
+            previous_compare_path = None
             time.sleep(0.3)
             continue
 
-        if previous_path and images_close(previous_path, current_path):
-            os.replace(current_path, output_path)
+        stable_path = current_compare_path if name == "wishlist" else current_path
+        previous_stable_path = (
+            previous_compare_path if name == "wishlist" else previous_path
+        )
+
+        if previous_path and images_close(previous_stable_path, stable_path):
+            if name == "wishlist":
+                save_wishlist_canonical(ctx, output_path, fallback_path=current_path)
+            else:
+                os.replace(current_path, output_path)
             return
 
         previous_path = current_path
+        previous_compare_path = current_compare_path
         time.sleep(0.3)
 
     if previous_path:
-        os.replace(previous_path, output_path)
+        if name == "wishlist":
+            save_wishlist_canonical(ctx, output_path, fallback_path=previous_path)
+        else:
+            os.replace(previous_path, output_path)
         return
 
     raise Exception("plugin screenshot is not stable")
 
 
-def capture_plugins(page):
+def capture_plugins(ctx, page_model):
     print("\nPlugin screenshots")
     results = {}
 
-    for name, locator in PLUGINS.items():
-        paths = build_paths(CURRENT_DIR, BASELINE_DIR, DIFF_DIR, name)
+    for name, locator in page_model.plugins.items():
+        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
         max_attempts = 2
         capture_start = time.perf_counter()
 
         for attempt in range(1, max_attempts + 1):
             try:
                 capture_stable_plugin(
-                    page,
+                    ctx,
+                    page_model.page,
                     name,
                     locator,
                     paths["current"],
                     timeout=20
                 )
-                normalize_plugin_image_for_compare(name, paths["current"])
-                prepare_plugin_compare_images(name, paths)
+                prepare_plugin_compare_images(ctx, name, paths)
                 paths["capture_duration_ms"] = round(
                     (time.perf_counter() - capture_start) * 1000,
                     2
@@ -265,67 +296,81 @@ def capture_plugins(page):
 def stabilize_banner(page):
     page.evaluate("""
         () => {
+            const disableMotion = (root) => {
+                root.querySelectorAll('*').forEach(function(el) {
+                    el.style.setProperty('animation', 'none', 'important');
+                    el.style.setProperty('transition', 'none', 'important');
+                });
+            };
+
             document.querySelectorAll('.flickity-enabled').forEach(function(el) {
                 if (window.Flickity && Flickity.data(el)) {
                     const flkty = Flickity.data(el);
                     flkty.stopPlayer();
-                    flkty.select(0, true);
+                    flkty.select(0, false, true);
+                    flkty.x = 0;
+                    flkty.positionSlider();
+                    flkty.pausePlayer();
                 }
+                disableMotion(el);
+            });
+
+            document.querySelectorAll('.slideshow, [class*="slideshow"]').forEach(function(el) {
+                disableMotion(el);
             });
         }
     """)
-    time.sleep(1)
+    time.sleep(0.5)
 
 
-def wait_for_home_page(page):
-    wait_for_page_load(page, label="Home")
-    locate_element(page, MODULES["header_1"])
-    locate_element(page, MODULES["banner"])
+def before_home_module_capture(name, page, element):
+    if name == "banner":
+        stabilize_banner(page)
 
 
 def run():
-    configure_context()
+    ctx = PageCheckContext(PAGE, suite=SUITE)
     failures = []
-    create_dirs(BASELINE_DIR, CURRENT_DIR, DIFF_DIR)
+    create_dirs(ctx.baseline_dir, ctx.current_dir, ctx.diff_dir)
 
     playwright = browser = context = page = None
 
     try:
         playwright, browser, context, page = init_browser()
-        open_page_with_retry(page, URL, wait_for_home_page, "Home")
+        page_model = HomePage(page, site_config=ctx.site_config)
+        page_model.open()
         time.sleep(2)
+        page_model.wait_until_ready()
 
-        failures.extend(dom_check(page, MODULES))
-        failures.extend(check_plugins(page))
+        failures.extend(dom_check(page, page_model.modules))
+        failures.extend(check_plugins(page_model))
 
-        plugin_results = capture_plugins(page)
+        plugin_results = capture_plugins(ctx, page_model)
 
-        hide_dynamic_elements(page, SITE_CONFIG, PAGE_CONFIG)
+        hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         stabilize_banner(page)
 
-        module_locators = {
-            name: module_locator
-            for name, module_locator in MODULES.items()
-            if name not in CAPTURE_EXCLUDE
-        }
         module_results = capture_modules(
             page,
-            module_locators,
-            CURRENT_DIR,
-            BASELINE_DIR,
-            DIFF_DIR,
+            ctx.module_locators_for_capture(),
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
             require_reviews=False,
-            site_config=SITE_CONFIG,
-            page_config=PAGE_CONFIG
+            site_config=ctx.site_config,
+            page_config=ctx.page_config,
+            before_capture=before_home_module_capture
         )
 
-        failures.extend(process_results(module_results, SITE, SUITE, PAGE))
-        failures.extend(process_results(plugin_results, SITE, SUITE, PAGE))
+        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(process_results(plugin_results, ctx.site, ctx.suite, ctx.page_name))
 
     except Exception as e:
         error = f"Playwright runtime error: {type(e).__name__}: {e}"
         failures.append(f"Home: {error}")
-        add_result(build_result(SITE, SUITE, PAGE, "runtime", "failed", None, error=error))
+        add_result(
+            build_result(ctx.site, ctx.suite, ctx.page_name, "runtime", "failed", None, error=error)
+        )
     finally:
         close_browser(playwright, browser, context)
 

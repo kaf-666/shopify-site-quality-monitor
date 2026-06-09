@@ -57,6 +57,11 @@ pages:
       search_btn:
         - xpath
         - "//*[contains(@class, 'site-nav small--hide')]"
+    mobile:
+      modules:
+        search_btn:
+          - css
+          - ".js-search-header.medium-up--hide"
 
   collection:
     url: https://mondressy.co.uk/collections/mother-of-the-bride-dresses
@@ -102,3 +107,6 @@ pages:
     variant_inputs:
       - xpath
       - "//*[contains(@class,'variant')]//input"
+    variant_gallery_options:
+      - xpath
+      - "//*[self::a or self::button][(contains(@class,'product__thumb') or contains(@class,'product-single__thumbnail')) and not(contains(@class,'product__thumb-arrow'))]"
