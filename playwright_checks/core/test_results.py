@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from playwright_checks.core.config_loader import PROJECT_ROOT, load_settings
+from playwright_checks.core.paths import artifact_root, current_run_id
 
 
 DEFAULT_RESULTS_FILE = PROJECT_ROOT / "reports" / "visual-results.json"
@@ -62,5 +63,11 @@ def write_results(path=None):
 
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(_RESULTS, file, ensure_ascii=False, indent=2)
+
+    artifact_path = artifact_root() / current_run_id() / "visual-results.json"
+    if output_path != artifact_path.resolve():
+        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+        with artifact_path.open("w", encoding="utf-8") as file:
+            json.dump(_RESULTS, file, ensure_ascii=False, indent=2)
 
     return str(output_path)

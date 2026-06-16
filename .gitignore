@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 reports/
+artifacts/
 driver/*.exe
 screenshots/**/current/
 screenshots/**/diff/

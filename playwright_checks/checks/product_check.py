@@ -13,8 +13,7 @@ from playwright_checks.core.viewport import get_current_viewport_name
 from playwright_checks.pages.product_page import ProductPage
 from playwright_checks.utils.capture import (
     capture_modules,
-    scroll_to_center,
-    wait_for_layout_stable,
+    prepare_for_screenshot,
 )
 from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
@@ -175,16 +174,25 @@ def capture_gallery_variant(
     candidate_index,
 ):
     name = f"variant_{captured_count}"
-    paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
+    paths = build_paths(
+        ctx.current_dir,
+        ctx.baseline_dir,
+        ctx.diff_dir,
+        name,
+        legacy_baseline_dir=ctx.legacy_baseline_dir,
+    )
     capture_start = time.perf_counter()
 
     target = gallery_capture_target(page_model)
-    scroll_to_center(target)
-    hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
-    if not wait_for_layout_stable(target, timeout=10):
-        raise Exception("layout is not stable")
-    hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
-    time.sleep(0.5)
+    prepare_for_screenshot(
+        page_model.page,
+        target,
+        site_config=ctx.site_config,
+        page_config=ctx.page_config,
+        require_reviews=ctx.page_config.get("require_reviews", True),
+        timeout=10,
+        settle_delay=0.5,
+    )
 
     target = gallery_capture_target(page_model)
     probe_path = os.path.join(
@@ -390,7 +398,8 @@ def run():
             ctx.diff_dir,
             require_reviews=ctx.page_config.get("require_reviews", True),
             site_config=ctx.site_config,
-            page_config=ctx.page_config
+            page_config=ctx.page_config,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
         )
         variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)

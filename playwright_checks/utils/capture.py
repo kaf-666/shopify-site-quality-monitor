@@ -124,6 +124,62 @@ def wait_for_capture_ready(page, element, require_reviews=True, timeout=10):
         raise Exception("layout is not stable")
 
 
+def disable_motion(page):
+    page.evaluate("""
+        () => {
+            const styleId = 'visual-regression-disable-motion';
+            if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.textContent = `
+                    *, *::before, *::after {
+                        animation-duration: 0s !important;
+                        animation-delay: 0s !important;
+                        transition-duration: 0s !important;
+                        transition-delay: 0s !important;
+                        scroll-behavior: auto !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+        }
+    """)
+
+
+def prepare_for_screenshot(
+    page,
+    element,
+    site_config=None,
+    page_config=None,
+    require_reviews=True,
+    timeout=10,
+    settle_delay=1,
+    before_capture=None,
+):
+    scroll_to_center(element)
+    disable_motion(page)
+    hide_dynamic_elements(page, site_config, page_config)
+
+    if before_capture:
+        before_capture(element)
+
+    wait_for_capture_ready(
+        page,
+        element,
+        require_reviews=require_reviews,
+        timeout=timeout,
+    )
+
+    if settle_delay:
+        time.sleep(settle_delay)
+
+    disable_motion(page)
+    hide_dynamic_elements(page, site_config, page_config)
+
+    if before_capture:
+        before_capture(element)
+
+
 def screenshot_element_with_retry(locate, output_path, prepare=None, attempts=3, delay=1):
     start = time.perf_counter()
     last_error = None
@@ -175,7 +231,8 @@ def capture_modules(
     require_reviews=True,
     site_config=None,
     page_config=None,
-    before_capture=None
+    before_capture=None,
+    legacy_baseline_dir=None
 ):
     print("\nModule screenshots")
     results = {}
@@ -185,27 +242,28 @@ def capture_modules(
             current_dir,
             baseline_dir,
             diff_dir,
-            name
+            name,
+            legacy_baseline_dir=legacy_baseline_dir,
         )
 
         def locate(locator=locator):
             return locate_element(page, locator)
 
         def prepare(element):
-            scroll_to_center(element)
-            hide_dynamic_elements(page, site_config, page_config)
-            if before_capture:
-                before_capture(name, page, element)
-            wait_for_capture_ready(
+            prepare_for_screenshot(
                 page,
                 element,
+                site_config=site_config,
+                page_config=page_config,
                 require_reviews=require_reviews,
-                timeout=10
+                timeout=10,
+                settle_delay=1,
+                before_capture=(
+                    (lambda prepared: before_capture(name, page, prepared))
+                    if before_capture
+                    else None
+                ),
             )
-            time.sleep(1)
-            hide_dynamic_elements(page, site_config, page_config)
-            if before_capture:
-                before_capture(name, page, element)
 
         try:
             metrics = screenshot_element_with_retry(

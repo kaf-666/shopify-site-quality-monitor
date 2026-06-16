@@ -12,6 +12,7 @@ from playwright_checks.core.viewport import is_mobile_viewport
 from playwright_checks.pages.collection_page import CollectionPage
 from playwright_checks.utils.capture import (
     capture_modules,
+    disable_motion,
     screenshot_element_with_retry,
     scroll_to_center,
     wait_for_images,
@@ -169,6 +170,7 @@ def capture_card_image_stable(ctx, page_model, index, output_path, hover=False):
         return get_product_card_by_index(page_model, index)
 
     def prepare(card):
+        disable_motion(page_model.page)
         scroll_to_center(card)
         hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
 
@@ -202,7 +204,13 @@ def capture_product_cards(ctx, page_model):
 
     for index in range(card_count):
         name = f"product_{index}"
-        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
+        paths = build_paths(
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
+            name,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
+        )
 
         try:
             metrics = capture_card_image_stable(ctx, page_model, index, paths["current"])
@@ -229,7 +237,13 @@ def capture_hover_cards(ctx, page_model):
 
     for index in range(card_count):
         name = f"hover_{index}"
-        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
+        paths = build_paths(
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
+            name,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
+        )
 
         try:
             metrics = capture_card_image_stable(
@@ -276,7 +290,8 @@ def run():
             ctx.diff_dir,
             require_reviews=False,
             site_config=ctx.site_config,
-            page_config=ctx.page_config
+            page_config=ctx.page_config,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
         )
         product_results = capture_product_cards(ctx, page_model)
         hover_results = capture_hover_cards(ctx, page_model)

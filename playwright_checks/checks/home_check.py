@@ -10,7 +10,13 @@ from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import add_result, clear_results, write_results
 from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.pages.home_page import HomePage
-from playwright_checks.utils.capture import capture_modules, scroll_to_center, wait_for_layout_stable
+from playwright_checks.utils.capture import (
+    capture_modules,
+    disable_motion,
+    scroll_to_center,
+    wait_for_layout_stable,
+)
+from playwright_checks.core.paths import baseline_dir, legacy_baseline_dir
 from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
     build_paths,
@@ -75,13 +81,14 @@ def normalize_plugin_image_for_compare(ctx, name, path, output_path=None):
 
 
 def desktop_wishlist_baseline_path(ctx):
-    if not ctx.root_dir:
-        return None
+    candidates = [
+        baseline_dir(ctx.site, PAGE, viewport="desktop") / "wishlist.png",
+        legacy_baseline_dir(ctx.site, PAGE, viewport="desktop") / "wishlist.png",
+    ]
 
-    site_root = os.path.dirname(ctx.root_dir)
-    candidate = os.path.join(site_root, "desktop", PAGE, "baseline", "wishlist.png")
-    if os.path.exists(candidate):
-        return candidate
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return str(candidate)
 
     return None
 
@@ -191,6 +198,7 @@ def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
 
     while time.time() < end_time:
         element = locate_element(page, locator)
+        disable_motion(page)
         normalize_plugin_for_screenshot(name, element)
         scroll_to_center(element)
         time.sleep(0.2)
@@ -252,7 +260,13 @@ def capture_plugins(ctx, page_model):
     results = {}
 
     for name, locator in page_model.plugins.items():
-        paths = build_paths(ctx.current_dir, ctx.baseline_dir, ctx.diff_dir, name)
+        paths = build_paths(
+            ctx.current_dir,
+            ctx.baseline_dir,
+            ctx.diff_dir,
+            name,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
+        )
         max_attempts = 2
         capture_start = time.perf_counter()
 
@@ -359,7 +373,8 @@ def run():
             require_reviews=False,
             site_config=ctx.site_config,
             page_config=ctx.page_config,
-            before_capture=before_home_module_capture
+            before_capture=before_home_module_capture,
+            legacy_baseline_dir=ctx.legacy_baseline_dir,
         )
 
         failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))

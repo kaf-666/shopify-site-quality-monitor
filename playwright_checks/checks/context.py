@@ -1,4 +1,3 @@
-import os
 from dataclasses import dataclass, field
 
 from playwright_checks.core.config_loader import (
@@ -7,7 +6,7 @@ from playwright_checks.core.config_loader import (
     locator,
     locator_map,
 )
-from playwright_checks.utils.waits import screenshot_root
+from playwright_checks.core.paths import page_paths
 
 
 @dataclass
@@ -20,11 +19,14 @@ class PageCheckContext:
         self.page_config = get_page_config(self.page_name, self.site_config)
         self.url = self.page_config["url"]
         self.site = self.site_config["site"]
-        self.root_dir = screenshot_root(self.site)
-        self.page_dir = os.path.join(self.root_dir, self.page_name)
-        self.baseline_dir = os.path.join(self.page_dir, "baseline")
-        self.current_dir = os.path.join(self.page_dir, "current")
-        self.diff_dir = os.path.join(self.page_dir, "diff")
+        paths = page_paths(self.site, self.page_name)
+        self.run_id = paths["run_id"]
+        self.root_dir = paths["root_dir"]
+        self.page_dir = paths["page_dir"]
+        self.baseline_dir = paths["baseline_dir"]
+        self.legacy_baseline_dir = paths["legacy_baseline_dir"]
+        self.current_dir = paths["current_dir"]
+        self.diff_dir = paths["diff_dir"]
         self.modules = locator_map(self.page_config.get("modules", {}))
         self.capture_exclude = set(self.page_config.get("capture_exclude", []))
 

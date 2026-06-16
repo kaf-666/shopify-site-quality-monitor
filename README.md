@@ -12,9 +12,10 @@ This project is a Playwright-based visual regression test scaffold for Shopify s
 - `playwright_checks/flows/`: explicit business flows with real user actions and side effects.
 - `playwright_checks/utils/`: screenshot capture, DOM helpers, waits, visual comparison, and dynamic element handling.
 - `playwright_checks/runner/main.py`: Playwright check runner.
-- `screenshots/`: captured baseline, current, and diff images.
+- `baselines/`: reviewed visual baseline images for the new storage convention.
+- `artifacts/`: per-run current and diff images.
+- `screenshots/`: legacy captured baseline/current/diff images; existing baselines are still read for compatibility.
 - `reports/`: JSON test result output.
-- `baselines/`: reserved for future baseline storage conventions.
 
 ## Run
 
@@ -48,8 +49,40 @@ Initialize missing baselines for a new viewport:
 $env:VISUAL_VIEWPORT="mobile"; $env:ALLOW_BASELINE_INIT="1"; .\.venv\Scripts\python.exe run_all.py
 ```
 
+New baseline initialization writes to `baselines/`. Existing legacy baselines under
+`screenshots/**/baseline` remain readable while the baseline set is migrated.
+
 Run an explicit side-effect flow:
 
 ```powershell
-.\.venv\Scripts\python.exe -m playwright_checks.flows.add_to_cart_flow
+$env:ALLOW_SIDE_EFFECT_FLOW="1"; .\.venv\Scripts\python.exe -m playwright_checks.flows.add_to_cart_flow
 ```
+
+Side-effect flows are disabled by default so visual regression does not perform
+real add-to-cart, checkout, or login actions.
+
+## CI / Jenkins
+
+When `CI=true` is detected, or when `JENKINS_URL` is present, visual warnings are
+treated as failures by default. Local runs keep warnings non-blocking by default.
+To make local warnings fail the run, set:
+
+```powershell
+$env:VISUAL_STRICT_WARNINGS="1"; .\.venv\Scripts\python.exe run_all.py
+```
+
+CI/Jenkins runs do not automatically initialize missing baselines, even when
+`ALLOW_BASELINE_INIT=1` is set. To force baseline initialization in CI, both
+variables must be set:
+
+```powershell
+$env:ALLOW_BASELINE_INIT="1"; $env:FORCE_BASELINE_INIT="1"; .\.venv\Scripts\python.exe run_all.py
+```
+
+Automatic baseline updates in CI are not recommended. Baseline changes should be
+reviewed manually and committed under `baselines/`.
+
+Recommended Jenkins archive paths:
+
+- `artifacts/**`
+- `reports/visual-results.json`

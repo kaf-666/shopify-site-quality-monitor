@@ -1,31 +1,36 @@
+import os
 import sys
 import time
 
+from playwright.sync_api import Error as PlaywrightError
+
+from playwright_checks.core.config_loader import load_settings
 from playwright_checks.core.driver import close_browser, init_browser
-from playwright_checks.core.config_loader import get_page_config, load_site_config, locator_map
-from playwright_checks.utils.waits import (
-    locate_element,
-    open_page_with_retry,
-    wait_for_page_load,
-    wait_for_visible,
-)
+from playwright_checks.pages.product_page import ProductPage
 
 
-PAGE = "product"
+SIDE_EFFECT_FLOW_ENV = "ALLOW_SIDE_EFFECT_FLOW"
 
 
-def configure_context():
-    site_config = load_site_config()
-    page_config = get_page_config(PAGE, site_config)
-    modules = locator_map(page_config["modules"])
-    return site_config, page_config, modules
+def _env_bool(name):
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def wait_for_product_page(page, modules):
-    wait_for_page_load(page, label="PDP")
-    wait_for_visible(page, modules["gallery"])
-    wait_for_visible(page, modules["info"])
-    wait_for_visible(page, modules["add_to_cart"])
+def side_effect_flow_enabled():
+    env_value = _env_bool(SIDE_EFFECT_FLOW_ENV)
+    if env_value is not None:
+        return env_value
+
+    settings = load_settings()
+    side_effects = settings.get("side_effects", {})
+    suites = settings.get("suites", {})
+    return bool(
+        side_effects.get("enabled", False)
+        and suites.get("side_effect_flows", False)
+    )
 
 
 def cart_count_value(value):
@@ -38,8 +43,24 @@ def cart_count_value(value):
     return None
 
 
+def evaluate_with_navigation_retry(page, script, label, attempts=3):
+    for attempt in range(1, attempts + 1):
+        try:
+            return page.evaluate(script)
+        except PlaywrightError as e:
+            if "Execution context was destroyed" not in str(e) or attempt == attempts:
+                raise
+
+            print(f"WARN {label} interrupted by navigation, retry {attempt}/{attempts}")
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except PlaywrightError:
+                pass
+            time.sleep(1)
+
+
 def get_cart_item_count(page):
-    return page.evaluate("""
+    return evaluate_with_navigation_retry(page, """
         async () => {
             try {
                 const response = await fetch('/cart.js', { credentials: 'same-origin' });
@@ -52,11 +73,11 @@ def get_cart_item_count(page):
                 return { error: error.message };
             }
         }
-    """)
+    """, "cart.js")
 
 
 def clear_cart(page):
-    return page.evaluate("""
+    return evaluate_with_navigation_retry(page, """
         async () => {
             try {
                 const response = await fetch('/cart/clear.js', {
@@ -73,7 +94,7 @@ def clear_cart(page):
                 return { error: error.message };
             }
         }
-    """)
+    """, "cart/clear.js")
 
 
 def visible_add_to_cart_error(page):
@@ -160,18 +181,20 @@ def select_first_available_variant_options(page):
 
 
 def run():
-    _, page_config, modules = configure_context()
     failures = []
     playwright = browser = context = page = None
 
+    if not side_effect_flow_enabled():
+        print(
+            "SKIP add-to-cart flow: side-effect flows are disabled. "
+            f"Set {SIDE_EFFECT_FLOW_ENV}=1 only for isolated E2E runs."
+        )
+        return failures
+
     try:
         playwright, browser, context, page = init_browser()
-        open_page_with_retry(
-            page,
-            page_config["url"],
-            lambda target: wait_for_product_page(target, modules),
-            "PDP add-to-cart flow",
-        )
+        page_model = ProductPage(page)
+        page_model.open()
         time.sleep(2)
 
         cleared_count = cart_count_value(clear_cart(page))
@@ -191,7 +214,7 @@ def run():
         if before_count is None:
             raise Exception("cannot read cart.js item_count before click")
 
-        button = locate_element(page, modules["add_to_cart"])
+        button = page_model.module("add_to_cart")
         button.click(timeout=10000)
 
         end_time = time.time() + 10

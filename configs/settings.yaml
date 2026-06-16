@@ -1,6 +1,19 @@
 default_site: mondressy_US
 screenshot_suffix: _playwright
 results_file: reports/visual-results.json
+paths:
+  baseline_root: baselines
+  artifact_root: artifacts
+  legacy_screenshot_root: screenshots
+  legacy_baseline_fallback: true
+ci:
+  allow_baseline_init: false
+  strict_warnings: false
+suites:
+  visual_readonly: true
+  side_effect_flows: false
+side_effects:
+  enabled: false
 browser:
   channel: chrome
   headed: false
@@ -24,3 +37,4 @@ viewports:
 visual:
   change_threshold: 0.005
   warning_threshold: 0.02
+  stabilize_timeout: 10

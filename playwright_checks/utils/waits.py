@@ -30,6 +30,7 @@ from playwright_checks.core.config_loader import (  # noqa: E402
     locator,
     locator_map,
 )
+from playwright_checks.core.paths import legacy_screenshot_root
 from playwright_checks.core.viewport import get_current_viewport_name
 
 
@@ -45,17 +46,7 @@ TRANSIENT_VERIFICATION_PATTERNS = [
 
 
 def screenshot_root(site):
-    settings = load_settings()
-    suffix = os.environ.get(
-        "PLAYWRIGHT_SCREENSHOT_SUFFIX",
-        settings.get("screenshot_suffix", "_playwright"),
-    )
-    return os.path.join(
-        PROJECT_ROOT,
-        "screenshots",
-        f"{site}{suffix}",
-        get_current_viewport_name(),
-    )
+    return str(legacy_screenshot_root(site))
 
 
 def selector_for(locator_value):
@@ -150,9 +141,26 @@ def create_dirs(*dirs):
         os.makedirs(directory, exist_ok=True)
 
 
-def build_paths(current_dir, baseline_dir, diff_dir, name):
+def build_paths(current_dir, baseline_dir, diff_dir, name, legacy_baseline_dir=None):
+    baseline = os.path.join(baseline_dir, f"{name}.png")
+    legacy_baseline = (
+        os.path.join(legacy_baseline_dir, f"{name}.png")
+        if legacy_baseline_dir
+        else None
+    )
+
+    active_baseline = baseline
+    if (
+        legacy_baseline
+        and not os.path.exists(baseline)
+        and os.path.exists(legacy_baseline)
+    ):
+        active_baseline = legacy_baseline
+
     return {
         "current": os.path.join(current_dir, f"{name}.png"),
-        "baseline": os.path.join(baseline_dir, f"{name}.png"),
+        "baseline": active_baseline,
+        "target_baseline": baseline,
+        "legacy_baseline": legacy_baseline,
         "diff": os.path.join(diff_dir, f"{name}.png"),
     }
