@@ -1,3 +1,4 @@
+import os
 import sys
 
 from playwright_checks.checks.collection_check import run as run_collection
@@ -5,6 +6,14 @@ from playwright_checks.checks.home_check import run as run_home
 from playwright_checks.checks.product_check import run as run_product
 from playwright_checks.core.test_results import clear_results, drop_results, write_results
 from playwright_checks.core.viewport import get_run_viewport_names, set_current_viewport
+
+
+PAGE_ENV = "VISUAL_PAGE"
+ALL_PAGES = (
+    ("Home", "home", run_home),
+    ("PLP", "collection", run_collection),
+    ("PDP", "product", run_product),
+)
 
 
 def print_failure_summary(failures):
@@ -46,10 +55,24 @@ def run_page(label, page_name, run_func, viewport_name):
     return with_viewport(failures, viewport_name)
 
 
+def get_run_pages():
+    selected = (os.environ.get(PAGE_ENV) or "all").strip().lower()
+    if selected in ("", "all"):
+        return ALL_PAGES
+
+    for page in ALL_PAGES:
+        if page[1] == selected:
+            return (page,)
+
+    allowed = ", ".join([page[1] for page in ALL_PAGES] + ["all"])
+    raise ValueError(f"Unsupported VISUAL_PAGE={selected!r}. Allowed values: {allowed}")
+
+
 def run_all():
     failures = []
     clear_results()
     viewport_names = get_run_viewport_names()
+    run_pages = get_run_pages()
 
     print("=" * 50)
     print("Start Playwright visual regression")
@@ -62,9 +85,8 @@ def run_all():
         print(f"Viewport: {viewport_name}")
         print("-" * 50)
 
-        failures.extend(run_page("Home", "home", run_home, viewport_name))
-        failures.extend(run_page("PLP", "collection", run_collection, viewport_name))
-        failures.extend(run_page("PDP", "product", run_product, viewport_name))
+        for label, page_name, run_func in run_pages:
+            failures.extend(run_page(label, page_name, run_func, viewport_name))
 
     results_file = write_results()
     print(f"\nVisual test results: {results_file}")
