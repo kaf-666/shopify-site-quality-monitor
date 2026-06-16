@@ -14,6 +14,7 @@ from playwright_checks.pages.product_page import ProductPage
 from playwright_checks.utils.capture import (
     capture_modules,
     prepare_for_screenshot,
+    wait_for_layout_stable,
 )
 from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
 from playwright_checks.utils.waits import (
@@ -26,6 +27,16 @@ from playwright_checks.utils.visual import build_result, process_results
 
 SUITE = "visual"
 PAGE = "product"
+ADD_TO_CART_EXPECTED_TEXTS = (
+    "add to cart",
+    "add to bag",
+    "add to basket",
+)
+ADD_TO_CART_LOADING_CLASSES = (
+    "loading",
+    "is-loading",
+    "btn--loading",
+)
 
 
 def check_add_to_cart(page_model):
@@ -45,6 +56,260 @@ def check_add_to_cart(page_model):
         failures.append(f"Add To Cart state error: {e}")
 
     return failures
+
+
+def normalized_text(value):
+    return " ".join(str(value or "").split()).lower()
+
+
+def add_to_cart_text_matches(text):
+    normalized = normalized_text(text)
+    return any(expected in normalized for expected in ADD_TO_CART_EXPECTED_TEXTS)
+
+
+def add_to_cart_button_state(button):
+    state = button.evaluate(
+        """
+        (button) => {
+            const rect = button.getBoundingClientRect();
+            const style = window.getComputedStyle(button);
+            const textValues = [
+                button.innerText,
+                button.textContent,
+                button.getAttribute('aria-label'),
+                button.getAttribute('value')
+            ].filter(Boolean);
+
+            return {
+                text: textValues.join(' ').replace(/\\s+/g, ' ').trim(),
+                className: String(button.className || '').toLowerCase(),
+                ariaBusy: String(button.getAttribute('aria-busy') || '').toLowerCase(),
+                ariaDisabled: String(button.getAttribute('aria-disabled') || '').toLowerCase(),
+                disabled: Boolean(button.disabled),
+                hasForm: Boolean(button.closest('form')),
+                visibleStyle: style.display !== 'none' && style.visibility !== 'hidden',
+                top: Math.round(rect.top),
+                bottom: Math.round(rect.bottom),
+                left: Math.round(rect.left),
+                right: Math.round(rect.right),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+            };
+        }
+        """
+    )
+    state["visible"] = button.is_visible(timeout=500)
+    state["enabled"] = button.is_enabled(timeout=500)
+    state["has_text"] = bool(normalized_text(state.get("text")))
+    state["text_matches"] = add_to_cart_text_matches(state.get("text"))
+    state["loading"] = any(
+        marker in state.get("className", "")
+        for marker in ADD_TO_CART_LOADING_CLASSES
+    )
+    state["busy"] = state.get("ariaBusy") == "true"
+    state["disabled_state"] = (
+        state.get("disabled")
+        or state.get("ariaDisabled") == "true"
+        or not state.get("enabled")
+    )
+    state["viewport_ready"] = (
+        state.get("top", 0) >= 0
+        and state.get("left", 0) >= 0
+        and state.get("bottom", 0) <= state.get("viewportHeight", 0)
+        and state.get("right", 0) <= state.get("viewportWidth", 0)
+    )
+    state["content_ready"] = (
+        state["visible"]
+        and state["visibleStyle"]
+        and state["enabled"]
+        and state["has_text"]
+        and not state["loading"]
+        and not state["busy"]
+        and not state["disabled_state"]
+        and state.get("width", 0) > 0
+        and state.get("height", 0) > 0
+    )
+    state["ready"] = state["content_ready"] and state["viewport_ready"]
+    return state
+
+
+def add_to_cart_candidate_score(state):
+    return (
+        1 if state.get("hasForm") else 0,
+        1 if state.get("text_matches") else 0,
+        len(normalized_text(state.get("text"))),
+        state.get("width", 0) * state.get("height", 0),
+    )
+
+
+def format_button_state(state):
+    if not state:
+        return "no candidate state"
+
+    return (
+        f"text={state.get('text')!r}, visible={state.get('visible')}, "
+        f"enabled={state.get('enabled')}, loading={state.get('loading')}, "
+        f"busy={state.get('busy')}, "
+        f"size={state.get('width')}x{state.get('height')}, "
+        f"rect=({state.get('left')},{state.get('top')})-"
+        f"({state.get('right')},{state.get('bottom')}), "
+        f"viewport={state.get('viewportWidth')}x{state.get('viewportHeight')}"
+    )
+
+
+def scroll_add_to_cart_context_into_view(button):
+    button.evaluate(
+        """
+        (button) => {
+            const form = button.closest('form');
+            const target = form || button;
+            target.scrollIntoView({block: 'center', inline: 'nearest'});
+        }
+        """
+    )
+    time.sleep(0.2)
+
+
+def locate_ready_add_to_cart(page_model, timeout=10000):
+    selector = selector_for(page_model.modules["add_to_cart"])
+    end_time = time.time() + timeout / 1000
+    last_state = None
+
+    while time.time() < end_time:
+        buttons = page_model.page.locator(selector)
+        candidates = []
+        offscreen_candidates = []
+
+        for index in range(buttons.count()):
+            button = buttons.nth(index)
+            try:
+                state = add_to_cart_button_state(button)
+                last_state = state
+                if state["ready"]:
+                    candidates.append((add_to_cart_candidate_score(state), button, state))
+                elif state["content_ready"]:
+                    offscreen_candidates.append(
+                        (add_to_cart_candidate_score(state), button, state)
+                    )
+            except Exception:
+                continue
+
+        if candidates:
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            button = candidates[0][1]
+            remaining = max(1, end_time - time.time())
+            if wait_for_layout_stable(button, timeout=min(remaining, 5)):
+                state = add_to_cart_button_state(button)
+                if state["ready"]:
+                    return button
+                last_state = state
+
+        if offscreen_candidates:
+            offscreen_candidates.sort(key=lambda item: item[0], reverse=True)
+            scroll_add_to_cart_context_into_view(offscreen_candidates[0][1])
+            time.sleep(0.2)
+            continue
+
+        time.sleep(0.2)
+
+    raise Exception(
+        "Add To Cart button not ready before screenshot: "
+        f"{format_button_state(last_state)}"
+    )
+
+
+def assert_add_to_cart_ready(button):
+    state = add_to_cart_button_state(button)
+    if not state["ready"]:
+        raise Exception(
+            "Add To Cart button became unready before screenshot: "
+            f"{format_button_state(state)}"
+        )
+
+
+def image_has_visible_pixels(path, threshold=250):
+    with Image.open(path).convert("RGB") as image:
+        pixels = np.array(image)
+    return bool((pixels < threshold).any(axis=2).any())
+
+
+def capture_add_to_cart(ctx, page_model, attempts=3):
+    print("\nAdd To Cart screenshot")
+    name = "add_to_cart"
+    results = {}
+    paths = build_paths(
+        ctx.current_dir,
+        ctx.baseline_dir,
+        ctx.diff_dir,
+        name,
+        legacy_baseline_dir=ctx.legacy_baseline_dir,
+    )
+    capture_start = time.perf_counter()
+    last_error = None
+
+    for attempt in range(1, attempts + 1):
+        probe_path = os.path.join(
+            tempfile.gettempdir(),
+            f"add_to_cart_probe_{time.time_ns()}.png"
+        )
+
+        try:
+            target = locate_ready_add_to_cart(page_model)
+            prepare_for_screenshot(
+                page_model.page,
+                target,
+                site_config=ctx.site_config,
+                page_config=ctx.page_config,
+                require_reviews=ctx.page_config.get("require_reviews", True),
+                timeout=10,
+                settle_delay=0.5,
+                before_capture=assert_add_to_cart_ready,
+            )
+
+            target = locate_ready_add_to_cart(page_model, timeout=5000)
+            target.screenshot(path=probe_path)
+
+            if not image_has_visible_pixels(probe_path):
+                raise Exception("Add To Cart screenshot is blank")
+
+            os.replace(probe_path, paths["current"])
+            paths["capture_duration_ms"] = round(
+                (time.perf_counter() - capture_start) * 1000,
+                2
+            )
+            paths["capture_attempts"] = attempt
+            results[name] = paths
+            print(
+                f"OK [{name}] "
+                f"{paths['capture_duration_ms']}ms "
+                f"attempts={paths['capture_attempts']}"
+            )
+            return results
+
+        except Exception as e:
+            last_error = e
+            if os.path.exists(probe_path):
+                os.remove(probe_path)
+
+            if attempt < attempts:
+                print(
+                    f"      add_to_cart screenshot retry {attempt}/{attempts}: "
+                    f"{type(e).__name__}: {e}"
+                )
+                time.sleep(1)
+
+    print(f"FAIL [{name}] capture failed: {last_error}")
+    results[name] = {
+        "error": f"capture failed: {last_error}",
+        "capture_duration_ms": round(
+            (time.perf_counter() - capture_start) * 1000,
+            2
+        ),
+        "capture_attempts": attempts,
+    }
+    return results
 
 
 def locate_visible_content(page, locator_value, timeout=10000):
@@ -390,17 +655,28 @@ def run():
         check_variant_count(page_model)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
-        module_results = capture_modules(
-            page,
-            ctx.module_locators_for_capture(),
-            ctx.current_dir,
-            ctx.baseline_dir,
-            ctx.diff_dir,
-            require_reviews=ctx.page_config.get("require_reviews", True),
-            site_config=ctx.site_config,
-            page_config=ctx.page_config,
-            legacy_baseline_dir=ctx.legacy_baseline_dir,
-        )
+        module_locators = ctx.module_locators_for_capture()
+        add_to_cart_locator = module_locators.pop("add_to_cart", None)
+        module_results = {}
+
+        if module_locators:
+            module_results.update(
+                capture_modules(
+                    page,
+                    module_locators,
+                    ctx.current_dir,
+                    ctx.baseline_dir,
+                    ctx.diff_dir,
+                    require_reviews=ctx.page_config.get("require_reviews", True),
+                    site_config=ctx.site_config,
+                    page_config=ctx.page_config,
+                    legacy_baseline_dir=ctx.legacy_baseline_dir,
+                )
+            )
+
+        if add_to_cart_locator:
+            module_results.update(capture_add_to_cart(ctx, page_model))
+
         variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)
 
