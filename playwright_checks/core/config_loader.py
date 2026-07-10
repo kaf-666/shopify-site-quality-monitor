@@ -248,6 +248,35 @@ def get_dynamic_hide_config(site_config=None, page_config=None):
     return merged
 
 
+def _normalize_css_blocks(value, key):
+    if not value:
+        return []
+
+    if isinstance(value, str):
+        return [value]
+
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+
+    raise ValueError(f"{key} must be a string or list of strings, got: {value!r}")
+
+
+def get_screenshot_css(site_config=None, page_config=None):
+    config = site_config if isinstance(site_config, dict) else load_site_config(site_config)
+    blocks = []
+    blocks.extend(_normalize_css_blocks(config.get("screenshot_css"), "screenshot_css"))
+
+    if page_config:
+        blocks.extend(
+            _normalize_css_blocks(
+                page_config.get("screenshot_css"),
+                "screenshot_css",
+            )
+        )
+
+    return "\n".join(blocks)
+
+
 def locator(value):
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError(f"Locator must be [method, value], got: {value!r}")

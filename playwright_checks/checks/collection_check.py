@@ -11,6 +11,8 @@ from playwright_checks.core.test_results import add_result, clear_results, write
 from playwright_checks.core.viewport import is_mobile_viewport
 from playwright_checks.pages.collection_page import CollectionPage
 from playwright_checks.utils.capture import (
+    capture_first_screen,
+    capture_global_screenshot,
     capture_modules,
     disable_motion,
     screenshot_element_with_retry,
@@ -18,7 +20,11 @@ from playwright_checks.utils.capture import (
     wait_for_images,
     wait_for_layout_stable,
 )
-from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
+from playwright_checks.utils.dom import (
+    dom_check,
+    dom_presence_check,
+    hide_dynamic_elements,
+)
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
@@ -278,10 +284,13 @@ def run():
         page_model.wait_until_ready()
 
         failures.extend(dom_check(page, page_model.modules))
+        failures.extend(dom_presence_check(page, page_model.dom_presence))
         failures.extend(check_product_count(page_model))
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
 
+        global_results = capture_global_screenshot(ctx, page)
+        first_screen_results = capture_first_screen(ctx, page)
         module_results = capture_modules(
             page,
             ctx.module_locators_for_capture(),
@@ -296,6 +305,22 @@ def run():
         product_results = capture_product_cards(ctx, page_model)
         hover_results = capture_hover_cards(ctx, page_model)
 
+        failures.extend(
+            process_results(
+                global_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
+        failures.extend(
+            process_results(
+                first_screen_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
         failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
         failures.extend(process_results(product_results, ctx.site, ctx.suite, ctx.page_name))
         failures.extend(process_results(hover_results, ctx.site, ctx.suite, ctx.page_name))

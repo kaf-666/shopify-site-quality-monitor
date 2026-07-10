@@ -1,0 +1,368 @@
+site: gracins_US
+base_url: https://www.gracins.com
+
+screenshot_css:
+  - |
+    .react-responsive-modal-root {
+      display: none !important;
+    }
+    .announcement--carousel .announcement__carousel-item {
+      opacity: 0 !important;
+    }
+    .announcement--carousel .announcement__carousel-item[data-slider-index="0"] {
+      opacity: 1 !important;
+    }
+
+dynamic_hide:
+  selectors:
+    - ".price"
+    - ".product__price"
+    - ".product-single__price"
+    - "[class*='price']"
+    - ".sale-badge"
+    - ".card__badge"
+    - "[class*='sale-badge']"
+    - "[class*='product-sale']"
+    - ".jdgm-widget"
+    - ".jdgm-preview-badge"
+    - ".jdgm-rev-widg"
+    - ".jdgm-carousel-wrapper"
+    - "[id*='judgeme']"
+    - "[class*='jdgm']"
+    - "[class*='judge']"
+    - ".spr-badge"
+    - ".shopify-payment-button"
+    - ".shopify-payment-button__button"
+    - "[data-shopify='payment-button']"
+    - "shopify-payment-terms"
+    - ".product-recommendations"
+    - "[id*='recommend']"
+    - "[class*='recommend']"
+    - "[id*='related']"
+    - "[class*='related-products']"
+    - "[class*='recently']"
+    - ".ecomsend__Modal"
+    - "[class*='ecomsend']"
+    - "[id*='newsletter']"
+    - "[class*='newsletter']"
+    - "[id*='popup']"
+    - "[class*='popup']"
+    - "[id*='chat']"
+    - "[class*='chat']"
+    - "[id*='tidio']"
+    - "[class*='tidio']"
+    - "[id*='gorgias']"
+    - "[class*='gorgias']"
+    - "[id*='intercom']"
+    - "[class*='intercom']"
+    - "iframe[src*='tidio']"
+    - "iframe[src*='gorgias']"
+    - "iframe[src*='intercom']"
+  text_exact:
+    - frequently bought together
+    - more payment options
+    - buy it now
+    - write a review
+  text_contains:
+    - pay with paypal
+    - afterpay
+    - as low as
+    - added to cart
+    - cart error
+    - sold out
+    - customer reviews
+
+pages:
+  home:
+    url: https://www.gracins.com/
+    capture_global_screenshot: true
+    capture_first_screen: true
+    dynamic_hide:
+      replace_defaults: true
+      selectors:
+        - ".shopify-payment-button"
+        - ".shopify-payment-button__button"
+        - "[data-shopify='payment-button']"
+        - "shopify-payment-terms"
+        - ".product-recommendations"
+        - "[id*='recommend']"
+        - "[class*='recommend']"
+        - "[id*='related']"
+        - "[class*='related-products']"
+        - "[class*='recently']"
+        - ".ecomsend__Modal"
+        - "[class*='ecomsend']"
+        - "[id*='newsletter']"
+        - "[class*='newsletter']"
+        - "[id*='popup']"
+        - "[class*='popup']"
+        - "[id*='chat']"
+        - "[class*='chat']"
+        - "[id*='tidio']"
+        - "[class*='tidio']"
+        - "[id*='gorgias']"
+        - "[class*='gorgias']"
+        - "[id*='intercom']"
+        - "[class*='intercom']"
+        - "iframe[src*='tidio']"
+        - "iframe[src*='gorgias']"
+        - "iframe[src*='intercom']"
+      text_exact:
+        - frequently bought together
+        - more payment options
+        - buy it now
+      text_contains:
+        - pay with paypal
+        - afterpay
+        - as low as
+        - added to cart
+        - cart error
+        - sold out
+    first_screen_clip:
+      x: 0
+      y: 0
+      width: 1600
+      height: 900
+    expected_keywords:
+      - gracins
+    modules:
+      header_1:
+        - xpath
+        - "(//*[contains(@class, 'shopify-section-group-header-group')])[1]"
+      header_2:
+        - xpath
+        - "(//*[contains(@class, 'shopify-section-group-header-group') and contains(@class, 'wau--header')])[1]"
+      banner:
+        - xpath
+        - "//*[contains(@class,'slideshow__slide') and contains(@class,'is-selected')]"
+      collections:
+        - xpath
+        - "(//*[@id='main-content']//section[contains(@class,'image__gallery-section')])[1]"
+      collections_1:
+        - xpath
+        - "(//*[@id='main-content']//section[contains(@class,'featured__collection')])[1]"
+      cart_btn:
+        - css
+        - "button.js-mini-cart-trigger"
+    dom_presence:
+      mobile_navigation_drawer:
+        - css
+        - "#slideout-mobile-navigation"
+      ajax_cart_drawer:
+        - css
+        - "#slideout-ajax-cart"
+      search_sidebar:
+        - css
+        - ".sidebar__search-container"
+      hidden_mega_menu:
+        - css
+        - ".gm-submenu"
+    mobile:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 390
+        height: 844
+
+  collection:
+    url: https://www.gracins.com/collections/formal-dresses
+    capture_global_screenshot: true
+    capture_first_screen: true
+    dynamic_hide:
+      replace_defaults: true
+      selectors:
+        - ".shopify-payment-button"
+        - ".shopify-payment-button__button"
+        - "[data-shopify='payment-button']"
+        - "shopify-payment-terms"
+        - ".product-recommendations"
+        - "[id*='recommend']"
+        - "[class*='recommend']"
+        - "[id*='related']"
+        - "[class*='related-products']"
+        - "[class*='recently']"
+        - ".ecomsend__Modal"
+        - "[class*='ecomsend']"
+        - "[id*='newsletter']"
+        - "[class*='newsletter']"
+        - "[id*='popup']"
+        - "[class*='popup']"
+        - "[id*='chat']"
+        - "[class*='chat']"
+        - "[id*='tidio']"
+        - "[class*='tidio']"
+        - "[id*='gorgias']"
+        - "[class*='gorgias']"
+        - "[id*='intercom']"
+        - "[class*='intercom']"
+        - "iframe[src*='tidio']"
+        - "iframe[src*='gorgias']"
+        - "iframe[src*='intercom']"
+      text_exact:
+        - frequently bought together
+        - more payment options
+        - buy it now
+      text_contains:
+        - pay with paypal
+        - afterpay
+        - as low as
+        - added to cart
+        - cart error
+        - sold out
+    expected_keywords:
+      - formal
+      - dresses
+    expected_count: 40
+    modules:
+      product_grid:
+        - css
+        - "#main-collection-product-grid"
+      filter:
+        - css
+        - ".collection__page--full-width-filters, .collection__filter-toggleWrapper"
+      pagination:
+        - css
+        - ".pagination.desktop-12"
+    product_card:
+      - css
+      - "#main-collection-product-grid .product-index:not(.bannerads)"
+    dom_presence:
+      mobile_navigation_drawer:
+        - css
+        - "#slideout-mobile-navigation"
+      ajax_cart_drawer:
+        - css
+        - "#slideout-ajax-cart"
+      search_sidebar:
+        - css
+        - ".sidebar__search-container"
+      hidden_pagination_container:
+        - css
+        - ".filtering__pagination"
+    desktop:
+      global_screenshot_min_height: 4500
+      global_screenshot_height_timeout: 20
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
+    mobile:
+      dom_presence:
+        hidden_mega_menu:
+          - css
+          - ".gm-submenu"
+      screenshot_css:
+        - |
+          #main-collection-product-grid .product-index .sale-item--percentage {
+            padding: 3px 6px !important;
+            font-size: 10px !important;
+            line-height: 18px !important;
+          }
+          #main-collection-product-grid .product-index .sale-item--percentage .icn__inner {
+            font-size: 10px !important;
+            line-height: 18px !important;
+          }
+          #main-collection-product-grid .product-index .swatch-lightning__tip {
+            padding: 3px 5px !important;
+            font-size: 8px !important;
+            line-height: 8.8px !important;
+          }
+          #main-collection-product-grid .product-index .swatch-lightning__tip-text,
+          #main-collection-product-grid .product-index .swatch-lightning__tip-colors {
+            font-size: 8px !important;
+            line-height: 8.8px !important;
+          }
+
+  product:
+    url: https://www.gracins.com/products/jersey-a-line-high-neck-3d-flowers-formal-dresses-gra1160096
+    capture_global_screenshot: true
+    capture_first_screen: true
+    dynamic_hide:
+      replace_defaults: true
+      selectors:
+        - ".shopify-payment-button"
+        - ".shopify-payment-button__button"
+        - "[data-shopify='payment-button']"
+        - "shopify-payment-terms"
+        - ".product-recommendations"
+        - "[id*='recommend']"
+        - "[class*='recommend']"
+        - "[id*='related']"
+        - "[class*='related-products']"
+        - "[class*='recently']"
+        - ".ecomsend__Modal"
+        - "[class*='ecomsend']"
+        - "[id*='newsletter']"
+        - "[class*='newsletter']"
+        - "[id*='popup']"
+        - "[class*='popup']"
+        - "[id*='chat']"
+        - "[class*='chat']"
+        - "[id*='tidio']"
+        - "[class*='tidio']"
+        - "[id*='gorgias']"
+        - "[class*='gorgias']"
+        - "[id*='intercom']"
+        - "[class*='intercom']"
+        - "iframe[src*='tidio']"
+        - "iframe[src*='gorgias']"
+        - "iframe[src*='intercom']"
+      text_exact:
+        - frequently bought together
+        - more payment options
+        - buy it now
+      text_contains:
+        - pay with paypal
+        - afterpay
+        - as low as
+        - added to cart
+        - cart error
+        - sold out
+    expected_keywords:
+      - jersey
+      - flowers
+    require_reviews: false
+    modules:
+      gallery:
+        - css
+        - ".js-product-gallery, .product__section-images"
+      info:
+        - css
+        - ".product__section-details"
+      add_to_cart:
+        - css
+        - ".AddtoCart, .js-ajax-submit"
+    variant_inputs:
+      - css
+      - ".swatches__container input, .product-form__input input, [class*='variant'] input, select.variant-options"
+    variant_gallery_options:
+      - css
+      - ".product-single__thumbnails-item, .product-single__thumbnail, .js-thumb-item"
+    dom_presence:
+      mobile_navigation_drawer:
+        - css
+        - "#slideout-mobile-navigation"
+      ajax_cart_drawer:
+        - css
+        - "#slideout-ajax-cart"
+      search_sidebar:
+        - css
+        - ".sidebar__search-container"
+      hidden_mega_menu:
+        - css
+        - ".gm-submenu"
+      gallery_thumbnails:
+        - css
+        - ".product-single__thumbnails-item"
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
+    mobile:
+      modules:
+        add_to_cart:
+          - css
+          - ".AddtoCart, .js-ajax-submit"

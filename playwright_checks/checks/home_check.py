@@ -12,12 +12,18 @@ from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.pages.home_page import HomePage
 from playwright_checks.utils.capture import (
     capture_modules,
+    capture_first_screen,
+    capture_global_screenshot,
     disable_motion,
     scroll_to_center,
     wait_for_layout_stable,
 )
 from playwright_checks.core.paths import baseline_dir, legacy_baseline_dir
-from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
+from playwright_checks.utils.dom import (
+    dom_check,
+    dom_presence_check,
+    hide_dynamic_elements,
+)
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
@@ -357,6 +363,7 @@ def run():
         page_model.wait_until_ready()
 
         failures.extend(dom_check(page, page_model.modules))
+        failures.extend(dom_presence_check(page, page_model.dom_presence))
         failures.extend(check_plugins(page_model))
 
         plugin_results = capture_plugins(ctx, page_model)
@@ -364,6 +371,16 @@ def run():
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         stabilize_banner(page)
 
+        global_results = capture_global_screenshot(
+            ctx,
+            page,
+            before_capture=stabilize_banner,
+        )
+        first_screen_results = capture_first_screen(
+            ctx,
+            page,
+            before_capture=stabilize_banner,
+        )
         module_results = capture_modules(
             page,
             ctx.module_locators_for_capture(),
@@ -377,6 +394,22 @@ def run():
             legacy_baseline_dir=ctx.legacy_baseline_dir,
         )
 
+        failures.extend(
+            process_results(
+                global_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
+        failures.extend(
+            process_results(
+                first_screen_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
         failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
         failures.extend(process_results(plugin_results, ctx.site, ctx.suite, ctx.page_name))
 

@@ -27,9 +27,24 @@ dynamic_hide:
     - afterpay
     - as low as
 
+global_screenshot_hide_selectors:
+  - ".alireviews-review-star-rating"
+  - "[id*='alireviews']"
+  - "[class*='alireviews']"
+  - "[id*='alr-']"
+  - "[class*='alr-']"
+
 pages:
   home:
     url: https://www.mondressy.com
+    capture_global_screenshot: true
+    capture_first_screen: true
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
     expected_keywords:
       - mondressy
     modules:
@@ -72,6 +87,14 @@ pages:
 
   collection:
     url: https://www.mondressy.com/collections/wedding-guest-dresses
+    capture_global_screenshot: true
+    capture_first_screen: true
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
     expected_keywords:
       - wedding
     expected_count: 40
@@ -91,6 +114,14 @@ pages:
 
   product:
     url: https://www.mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613
+    capture_global_screenshot: true
+    capture_first_screen: true
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
     expected_keywords:
       - dress
     require_reviews: false

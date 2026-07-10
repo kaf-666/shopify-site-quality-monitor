@@ -1,4 +1,23 @@
 site: lavetir_US
+base_url: https://www.lavetir.com
+
+screenshot_css:
+  - |
+    .wt-announcement__item,
+    .slideshow__slide {
+      animation: none !important;
+      transition: none !important;
+    }
+    .slideshow-section .swiper-wrapper {
+      transition-duration: 0ms !important;
+      transform: translate3d(-100%, 0, 0) !important;
+    }
+    .slideshow-section .swiper-pagination-bullet {
+      opacity: 0.2 !important;
+    }
+    .slideshow-section .swiper-pagination-bullet:first-child {
+      opacity: 1 !important;
+    }
 
 dynamic_hide:
   selectors:
@@ -32,58 +51,87 @@ access_denied_patterns:
 pages:
   home:
     url: https://www.lavetir.com/
+    capture_global_screenshot: true
+    capture_first_screen: true
+    first_screen_clip:
+      x: 0
+      y: 0
+      width: 1600
+      height: 900
     expected_keywords:
       - lavetir
     modules:
       header_1:
         - css
-        - "header, .site-header, .shopify-section-header, [id*='shopify-section-header']"
+        - "section.wt-announcement"
       header_2:
         - css
-        - ".announcement-bar, [id*='announcement'], header, .site-header"
+        - ".wt-header__aside"
       banner:
         - css
-        - "[class*='slideshow'], [class*='banner'], [class*='hero'], [id*='banner']"
+        - "section.slideshow-section"
       collections:
-        - xpath
-        - "(//*[contains(@id,'shopify-section')][.//a[contains(@href,'/collections/')]])[1]"
+        - css
+        - "section.wt-multicol__section"
       collections_1:
-        - xpath
-        - "(//*[contains(@id,'shopify-section')][.//a[contains(@href,'/collections/')]])[2]"
+        - css
+        - "section[id*='__featured_collection_']"
       user_btn:
-        - xpath
-        - "//*[self::a or self::button][contains(@href,'/account') or contains(@aria-label,'Account') or contains(@class,'account')]"
+        - css
+        - ".wt-header__panel__link[href='/account']"
       cart_btn:
-        - xpath
-        - "//*[self::a or self::button][contains(@href,'/cart') or contains(@aria-label,'Cart') or contains(@class,'cart')]"
+        - css
+        - ".wt-header__panel__link[href='/cart']"
       search_btn:
-        - xpath
-        - "//*[self::a or self::button][contains(@aria-label,'Search') or contains(@class,'search')]"
+        - css
+        - ".wt-header__search-trigger"
+    mobile:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 390
+        height: 844
+      modules:
+        header_2:
+          - css
+          - ".wt-header__panel"
 
   collection:
     url: https://www.lavetir.com/collections/mother-of-the-bride-dresses
+    capture_global_screenshot: true
+    capture_first_screen: true
     expected_keywords:
       - mother
       - bride
+    expected_count: 35
     modules:
       product_grid:
         - css
-        - "#ProductGridContainer, .product-grid, ul.grid, [class*='product-grid'], [class*='collection-products']"
+        - "#product-grid"
       filter:
         - css
-        - "facet-filters-form, .facets-container, [class*='filter'], [class*='sort']"
+        - ".collection__sticky-header"
       pagination:
         - css
-        - ".pagination, nav[role='navigation'], a[href*='page=']"
+        - ".wt-pagination-wrapper"
     product_card:
       - css
-      - "#ProductGridContainer a[href*='/products/'], .product-grid a[href*='/products/'], a[href*='/products/']"
+      - "#product-grid .card__container"
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
 
   product:
     url: https://www.lavetir.com/collections/mother-of-the-bride-dresses/products/lace-chiffon-square-neck-3-4-sleeves-3-pieces-pantsuits-with-appliques-jacket-22441666
+    capture_global_screenshot: true
+    capture_first_screen: true
     expected_keywords:
       - lace
       - chiffon
+    require_reviews: false
     modules:
       gallery:
         - css
@@ -97,3 +145,9 @@ pages:
     variant_inputs:
       - css
       - "variant-radios input, variant-selects select, .product-form__input input, [class*='variant'] input"
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900

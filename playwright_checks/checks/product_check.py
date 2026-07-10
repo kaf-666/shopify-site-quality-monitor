@@ -12,11 +12,17 @@ from playwright_checks.core.test_results import add_result, clear_results, write
 from playwright_checks.core.viewport import get_current_viewport_name
 from playwright_checks.pages.product_page import ProductPage
 from playwright_checks.utils.capture import (
+    capture_first_screen,
+    capture_global_screenshot,
     capture_modules,
     prepare_for_screenshot,
     wait_for_layout_stable,
 )
-from playwright_checks.utils.dom import dom_check, hide_dynamic_elements
+from playwright_checks.utils.dom import (
+    dom_check,
+    dom_presence_check,
+    hide_dynamic_elements,
+)
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
@@ -650,11 +656,14 @@ def run():
         page_model.wait_until_ready()
 
         failures.extend(dom_check(page, page_model.modules))
+        failures.extend(dom_presence_check(page, page_model.dom_presence))
         failures.extend(check_product_content(page_model))
         failures.extend(check_add_to_cart(page_model))
         check_variant_count(page_model)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
+        global_results = capture_global_screenshot(ctx, page)
+        first_screen_results = capture_first_screen(ctx, page)
         module_locators = ctx.module_locators_for_capture()
         add_to_cart_locator = module_locators.pop("add_to_cart", None)
         module_results = {}
@@ -680,6 +689,22 @@ def run():
         variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)
 
+        failures.extend(
+            process_results(
+                global_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
+        failures.extend(
+            process_results(
+                first_screen_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+            )
+        )
         failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
         failures.extend(process_results(variant_results, ctx.site, ctx.suite, ctx.page_name))
 

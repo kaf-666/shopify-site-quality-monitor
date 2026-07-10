@@ -1,5 +1,8 @@
-from playwright_checks.core.config_loader import get_dynamic_hide_config
-from playwright_checks.utils.waits import locate_element
+from playwright_checks.core.config_loader import (
+    get_dynamic_hide_config,
+    get_screenshot_css,
+)
+from playwright_checks.utils.waits import locate_element, selector_for
 
 
 def dom_check(page, modules):
@@ -25,13 +28,38 @@ def dom_check(page, modules):
     return failures
 
 
+def dom_presence_check(page, modules):
+    if not modules:
+        return []
+
+    print("\nDOM presence checks")
+    failures = []
+
+    for name, locator in modules.items():
+        selector = selector_for(locator)
+        elements = page.locator(selector)
+
+        try:
+            elements.first.wait_for(state="attached", timeout=10000)
+            count = elements.count()
+            print(f"OK [{name}] attached=True | count={count}")
+
+        except Exception as e:
+            print(f"FAIL [{name}] DOM presence error: {e}")
+            failures.append(f"DOM presence [{name}] error: {e}")
+
+    return failures
+
+
 def hide_dynamic_elements(page, site_config=None, page_config=None):
     hide_config = get_dynamic_hide_config(site_config, page_config)
+    hide_config["screenshot_css"] = get_screenshot_css(site_config, page_config)
 
     page.evaluate("""
         (config) => {
         const selectors = config.selectors || [];
         const styleId = 'screenshot-hack';
+        const customStyleId = 'screenshot-custom-css';
 
         if (!document.getElementById(styleId)) {
             const style = document.createElement('style');
@@ -41,6 +69,14 @@ def hide_dynamic_elements(page, site_config=None, page_config=None):
                 : '';
             document.head.appendChild(style);
         }
+
+        let customStyle = document.getElementById(customStyleId);
+        if (!customStyle) {
+            customStyle = document.createElement('style');
+            customStyle.id = customStyleId;
+            document.head.appendChild(customStyle);
+        }
+        customStyle.innerHTML = config.screenshot_css || '';
 
         const exact = (config.text_exact || []).map(function(item) {
             return String(item).toLowerCase();

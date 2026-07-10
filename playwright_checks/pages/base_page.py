@@ -24,6 +24,7 @@ class BasePage:
         self.config = get_page_config(self.page_name, self.site_config)
         self.url = self.config["url"]
         self.modules = locator_map(self.config.get("modules", {}))
+        self.dom_presence = locator_map(self.config.get("dom_presence", {}))
 
     def open(self):
         open_page_with_retry(
