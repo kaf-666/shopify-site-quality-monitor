@@ -2,29 +2,41 @@ import os
 
 from playwright.sync_api import sync_playwright
 
-from playwright_checks.core.config_loader import load_settings
+from playwright_checks.core.config_loader import load_settings, load_site_config
 from playwright_checks.core.viewport import get_viewport_config
 
 
-def init_browser():
+def init_browser(site_config=None):
     """Start Playwright with a deterministic Chrome context."""
 
     playwright = sync_playwright().start()
     settings = load_settings()
-    browser_settings = settings.get("browser", {})
+    configured_site = site_config or load_site_config()
+    browser_settings = dict(settings.get("browser", {}))
+    site_browser_settings = configured_site.get("browser", {})
+    browser_settings.update(site_browser_settings)
     viewport_config = get_viewport_config()
 
     channel = os.environ.get(
         "PLAYWRIGHT_BROWSER_CHANNEL",
         browser_settings.get("channel", "chrome"),
     )
-    headless = os.environ.get("PLAYWRIGHT_HEADED", "").lower() not in (
-        "1",
-        "true",
-        "yes",
-    )
-    if "PLAYWRIGHT_HEADED" not in os.environ:
+    headed_override = os.environ.get("PLAYWRIGHT_HEADED")
+    if "headed" in site_browser_settings:
         headless = not bool(browser_settings.get("headed", False))
+        mode_source = "site config"
+    elif headed_override is None:
+        headless = not bool(browser_settings.get("headed", False))
+        mode_source = "settings config"
+    else:
+        headless = headed_override.lower() not in ("1", "true", "yes")
+        mode_source = "PLAYWRIGHT_HEADED"
+
+    print(
+        "Browser mode: "
+        f"{'headless' if headless else 'headed'} "
+        f"({mode_source}, site={configured_site.get('site', 'unknown')})"
+    )
 
     browser = playwright.chromium.launch(
         channel=channel,

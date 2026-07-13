@@ -649,7 +649,7 @@ def run():
     playwright = browser = context = page = None
 
     try:
-        playwright, browser, context, page = init_browser()
+        playwright, browser, context, page = init_browser(ctx.site_config)
         page_model = ProductPage(page, site_config=ctx.site_config)
         page_model.open()
         time.sleep(2)
@@ -664,6 +664,14 @@ def run():
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         global_results = capture_global_screenshot(ctx, page)
         first_screen_results = capture_first_screen(ctx, page)
+
+        if ctx.page_config.get("reload_before_module_capture"):
+            print("Reloading product page before module capture")
+            page_model.open()
+            time.sleep(2)
+            page_model.wait_until_ready()
+            hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
+
         module_locators = ctx.module_locators_for_capture()
         add_to_cart_locator = module_locators.pop("add_to_cart", None)
         module_results = {}

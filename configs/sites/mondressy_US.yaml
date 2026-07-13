@@ -1,5 +1,12 @@
 site: mondressy_US
 
+browser:
+  headed: false
+
+global_screenshot_height_strategy: baseline
+global_screenshot_scroll_passes: 3
+global_screenshot_height_stable_checks: 4
+
 dynamic_hide:
   selectors:
     - ".price"
@@ -39,6 +46,7 @@ pages:
     url: https://www.mondressy.com
     capture_global_screenshot: true
     capture_first_screen: true
+    stable_banner_index: 0
     desktop:
       first_screen_clip:
         x: 0

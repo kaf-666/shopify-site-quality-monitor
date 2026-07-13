@@ -25,6 +25,7 @@ from playwright_checks.utils.dom import (
     dom_presence_check,
     hide_dynamic_elements,
 )
+from playwright_checks.utils.stability import stabilize_card_media
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
@@ -179,6 +180,7 @@ def capture_card_image_stable(ctx, page_model, index, output_path, hover=False):
         disable_motion(page_model.page)
         scroll_to_center(card)
         hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
+        stabilize_card_media(card, ctx.page_config, hover=False)
 
         if not wait_for_images(card, timeout=10):
             raise Exception("wait for images timeout")
@@ -189,10 +191,14 @@ def capture_card_image_stable(ctx, page_model, index, output_path, hover=False):
         card = locate()
         scroll_to_center(card)
         hide_dynamic_elements(page_model.page, ctx.site_config, ctx.page_config)
+        stabilize_card_media(card, ctx.page_config, hover=False)
 
         if hover:
             card.hover(timeout=10000)
-            time.sleep(1)
+            stabilize_card_media(card, ctx.page_config, hover=True)
+            if not wait_for_images(card, timeout=10):
+                raise Exception("wait for hover images timeout")
+            time.sleep(0.3)
 
     return screenshot_element_with_retry(
         locate,
@@ -277,7 +283,7 @@ def run():
     playwright = browser = context = page = None
 
     try:
-        playwright, browser, context, page = init_browser()
+        playwright, browser, context, page = init_browser(ctx.site_config)
         page_model = CollectionPage(page, site_config=ctx.site_config)
         page_model.open()
         time.sleep(2)

@@ -16,7 +16,7 @@ side_effects:
   enabled: false
 browser:
   channel: chrome
-  headed: false
+  headed: true
 run_viewports:
   - desktop
   - mobile

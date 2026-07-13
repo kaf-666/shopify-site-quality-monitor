@@ -134,7 +134,12 @@ def capture_metadata(paths):
         return {}
 
     metadata = {}
-    for key in ("capture_duration_ms", "capture_attempts"):
+    for key in (
+        "capture_duration_ms",
+        "capture_attempts",
+        "capture_height_strategy",
+        "capture_height_px",
+    ):
         if key in paths:
             metadata[key] = paths[key]
 

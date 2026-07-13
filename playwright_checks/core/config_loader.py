@@ -191,6 +191,7 @@ def get_access_denied_patterns(site_config=None, page_config=None):
 def _merge_dynamic_hide(base, override):
     merged = {
         "selectors": list(base.get("selectors", [])),
+        "exclude_selectors": list(base.get("exclude_selectors", [])),
         "text_exact": list(base.get("text_exact", [])),
         "text_contains": list(base.get("text_contains", [])),
         "text_max_length": base.get("text_max_length", 80),
@@ -206,13 +207,19 @@ def _merge_dynamic_hide(base, override):
     if override.get("replace_defaults"):
         merged = {
             "selectors": [],
+            "exclude_selectors": [],
             "text_exact": [],
             "text_contains": [],
             "text_max_length": 80,
             "container_selector": "section, form, div",
         }
 
-    for key in ("selectors", "text_exact", "text_contains"):
+    for key in (
+        "selectors",
+        "exclude_selectors",
+        "text_exact",
+        "text_contains",
+    ):
         values = override.get(key, [])
         if isinstance(values, str):
             values = [values]
@@ -232,7 +239,12 @@ def get_dynamic_hide_config(site_config=None, page_config=None):
     merged = _merge_dynamic_hide(DEFAULT_DYNAMIC_HIDE, config.get("dynamic_hide"))
     merged = _merge_dynamic_hide(merged, page_config.get("dynamic_hide") if page_config else None)
 
-    for key in ("selectors", "text_exact", "text_contains"):
+    for key in (
+        "selectors",
+        "exclude_selectors",
+        "text_exact",
+        "text_contains",
+    ):
         seen = set()
         values = []
         for value in merged.get(key, []):
@@ -244,6 +256,17 @@ def get_dynamic_hide_config(site_config=None, page_config=None):
             seen.add(dedupe_key)
             values.append(value)
         merged[key] = values
+
+    excluded_selectors = {
+        str(value).lower()
+        for value in merged.pop("exclude_selectors", [])
+    }
+    if excluded_selectors:
+        merged["selectors"] = [
+            value
+            for value in merged["selectors"]
+            if str(value).lower() not in excluded_selectors
+        ]
 
     return merged
 

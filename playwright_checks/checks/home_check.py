@@ -24,6 +24,7 @@ from playwright_checks.utils.dom import (
     dom_presence_check,
     hide_dynamic_elements,
 )
+from playwright_checks.utils.stability import stabilize_configured_display
 from playwright_checks.utils.waits import (
     build_paths,
     create_dirs,
@@ -313,9 +314,20 @@ def capture_plugins(ctx, page_model):
     return results
 
 
-def stabilize_banner(page):
+def banner_stable_index(page_config=None):
+    configured_index = (page_config or {}).get("stable_banner_index", 0)
+
+    try:
+        return max(0, int(configured_index))
+    except (TypeError, ValueError):
+        return 0
+
+
+def stabilize_banner(page, page_config=None):
+    stable_index = banner_stable_index(page_config)
+
     page.evaluate("""
-        () => {
+        (stableIndex) => {
             const disableMotion = (root) => {
                 root.querySelectorAll('*').forEach(function(el) {
                     el.style.setProperty('animation', 'none', 'important');
@@ -335,17 +347,60 @@ def stabilize_banner(page):
                 disableMotion(el);
             });
 
+            const slides = Array.from(document.querySelectorAll('.slideshow__slide'));
+            if (slides.length) {
+                const selectedSlide = slides.find(function(slide) {
+                    return Number(slide.dataset.index) === stableIndex;
+                }) || slides[Math.min(stableIndex, slides.length - 1)];
+                const selectedPosition = slides.indexOf(selectedSlide);
+                let flickityRoot = selectedSlide.closest('.flickity-enabled');
+
+                if (!flickityRoot) {
+                    const slideshowRoot = selectedSlide.closest('.slideshow');
+                    if (slideshowRoot) {
+                        flickityRoot = slideshowRoot.querySelector('.flickity-enabled');
+                    }
+                }
+
+                let selectedWithFlickity = false;
+                if (flickityRoot && window.Flickity && Flickity.data(flickityRoot)) {
+                    const flkty = Flickity.data(flickityRoot);
+                    const cells = flkty.getCellElements ? flkty.getCellElements() : [];
+                    const cellIndex = cells.indexOf(selectedSlide);
+
+                    flkty.stopPlayer();
+                    flkty.select(cellIndex >= 0 ? cellIndex : selectedPosition, false, true);
+                    flkty.pausePlayer();
+                    selectedWithFlickity = true;
+                }
+
+                slides.forEach(function(slide) {
+                    const isSelected = slide === selectedSlide;
+                    slide.classList.toggle('is-selected', isSelected);
+                    slide.setAttribute('aria-hidden', isSelected ? 'false' : 'true');
+
+                    if (!selectedWithFlickity) {
+                        slide.style.setProperty(
+                            'display',
+                            isSelected ? 'block' : 'none',
+                            'important'
+                        );
+                    }
+                });
+            }
+
             document.querySelectorAll('.slideshow, [class*="slideshow"]').forEach(function(el) {
                 disableMotion(el);
             });
         }
-    """)
+    """, stable_index)
+    stabilize_configured_display(page, page_config)
     time.sleep(0.5)
 
 
-def before_home_module_capture(name, page, element):
+def before_home_module_capture(name, page, element, page_config=None):
     if name == "banner":
-        stabilize_banner(page)
+        stabilize_banner(page, page_config)
 
 
 def run():
@@ -356,7 +411,7 @@ def run():
     playwright = browser = context = page = None
 
     try:
-        playwright, browser, context, page = init_browser()
+        playwright, browser, context, page = init_browser(ctx.site_config)
         page_model = HomePage(page, site_config=ctx.site_config)
         page_model.open()
         time.sleep(2)
@@ -369,17 +424,25 @@ def run():
         plugin_results = capture_plugins(ctx, page_model)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
-        stabilize_banner(page)
+        stabilize_banner(page, ctx.page_config)
+
+        def before_home_capture(capture_page):
+            stabilize_banner(capture_page, ctx.page_config)
+
+        def before_home_module_capture_for_context(name, capture_page, element):
+            before_home_module_capture(
+                name, capture_page, element, ctx.page_config
+            )
 
         global_results = capture_global_screenshot(
             ctx,
             page,
-            before_capture=stabilize_banner,
+            before_capture=before_home_capture,
         )
         first_screen_results = capture_first_screen(
             ctx,
             page,
-            before_capture=stabilize_banner,
+            before_capture=before_home_capture,
         )
         module_results = capture_modules(
             page,
@@ -390,7 +453,7 @@ def run():
             require_reviews=False,
             site_config=ctx.site_config,
             page_config=ctx.page_config,
-            before_capture=before_home_module_capture,
+            before_capture=before_home_module_capture_for_context,
             legacy_baseline_dir=ctx.legacy_baseline_dir,
         )
 

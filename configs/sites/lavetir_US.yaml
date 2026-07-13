@@ -1,16 +1,23 @@
 site: lavetir_US
 base_url: https://www.lavetir.com
 
+browser:
+  headed: true
+
+global_screenshot_height_strategy: baseline
+global_screenshot_scroll_passes: 3
+global_screenshot_height_stable_checks: 4
+
 screenshot_css:
   - |
-    .wt-announcement__item,
+    .wt-announcement__body,
     .slideshow__slide {
       animation: none !important;
       transition: none !important;
     }
     .slideshow-section .swiper-wrapper {
       transition-duration: 0ms !important;
-      transform: translate3d(-100%, 0, 0) !important;
+      transform: none !important;
     }
     .slideshow-section .swiper-pagination-bullet {
       opacity: 0.2 !important;
@@ -20,8 +27,9 @@ screenshot_css:
     }
 
 dynamic_hide:
-  selectors:
+  exclude_selectors:
     - ".price"
+  selectors:
     - ".sale-badge"
     - ".spr-badge"
     - "#size_error"
@@ -53,6 +61,15 @@ pages:
     url: https://www.lavetir.com/
     capture_global_screenshot: true
     capture_first_screen: true
+    stable_display:
+      - selector: ".wt-announcement__body"
+        index: 0
+        display: flex
+        wrapper_selector: ".wt-announcement__container"
+      - selector: "section.slideshow-section .swiper-slide:not(.swiper-slide-duplicate)"
+        index: 0
+        display: block
+        wrapper_selector: "section.slideshow-section .swiper-wrapper"
     first_screen_clip:
       x: 0
       y: 0
@@ -117,6 +134,10 @@ pages:
     product_card:
       - css
       - "#product-grid .card__container"
+    stable_card_media:
+      selector: "img"
+      default_index: 0
+      hover_index: 0
     desktop:
       first_screen_clip:
         x: 0
@@ -151,3 +172,5 @@ pages:
         y: 0
         width: 1600
         height: 900
+    mobile:
+      reload_before_module_capture: true

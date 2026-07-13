@@ -1,3 +1,4 @@
+import os
 import time
 
 from PIL import Image, ImageChops
@@ -101,6 +102,51 @@ def wait_for_visible_images(element, timeout=10):
         time.sleep(0.3)
 
     print(f"      wait for visible images timeout ({timeout}s)")
+    return False
+
+
+def wait_for_rendered_page_images(page, timeout=30):
+    """Wait for every rendered image, including ones activated by page scrolling."""
+
+    end_time = time.time() + timeout
+
+    while time.time() < end_time:
+        ready = page.evaluate("""
+            () => {
+                const images = Array.from(document.images || []);
+
+                return images.every((img) => {
+                    const style = window.getComputedStyle(img);
+                    const rect = img.getBoundingClientRect();
+                    const rendered =
+                        rect.width > 0
+                        && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && style.opacity !== '0';
+
+                    if (!rendered) return true;
+
+                    if (img.loading === 'lazy') img.loading = 'eager';
+                    if (img.dataset.src && !img.getAttribute('src')) {
+                        img.src = img.dataset.src;
+                    }
+                    if (img.dataset.srcset && !img.getAttribute('srcset')) {
+                        img.srcset = img.dataset.srcset;
+                    }
+
+                    return img.complete && img.naturalWidth > 0;
+                });
+            }
+        """)
+
+        if ready:
+            time.sleep(0.3)
+            return True
+
+        time.sleep(0.3)
+
+    print(f"      wait for rendered page images timeout ({timeout}s)")
     return False
 
 
@@ -408,6 +454,16 @@ def page_scroll_metrics(page):
     """)
 
 
+def global_screenshot_option(site_config, page_config, key, default=None):
+    """Resolve global-capture options with page settings taking precedence."""
+
+    if page_config and key in page_config:
+        return page_config[key]
+    if site_config and key in site_config:
+        return site_config[key]
+    return default
+
+
 def wait_for_scroll_height_stable(
     page,
     timeout=10,
@@ -448,21 +504,83 @@ def scroll_page_to_load_lazy_content(
     page_config=None,
     max_scrolls=80,
     delay=0.2,
+    max_passes=3,
 ):
-    metrics = page_scroll_metrics(page)
-    viewport_height = max(1, int(metrics.get("viewportHeight") or 1))
-    scroll_height = max(viewport_height, int(metrics.get("scrollHeight") or 0))
-    step = max(200, int(viewport_height * 0.8))
-    positions = list(range(0, scroll_height + step, step))[:max_scrolls]
+    """Walk the full document until lazy loading stops extending it."""
 
-    for y in positions:
-        page.evaluate("(y) => window.scrollTo(0, y)", y)
-        disable_motion(page)
-        hide_dynamic_elements(page, site_config, page_config)
+    for _ in range(max(1, int(max_passes))):
+        metrics = page_scroll_metrics(page)
+        viewport_height = max(1, int(metrics.get("viewportHeight") or 1))
+        starting_height = max(viewport_height, int(metrics.get("scrollHeight") or 0))
+        step = max(200, int(viewport_height * 0.8))
+        positions = list(range(0, starting_height + step, step))[:max_scrolls]
+
+        for y in positions:
+            page.evaluate("(y) => window.scrollTo(0, y)", y)
+            disable_motion(page)
+            hide_dynamic_elements(page, site_config, page_config)
+            hide_global_screenshot_elements(page, site_config, page_config)
+            time.sleep(delay)
+
+        page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
         time.sleep(delay)
+        ending_height = int(page_scroll_metrics(page).get("scrollHeight") or 0)
+        if ending_height <= starting_height:
+            break
 
     page.evaluate("() => window.scrollTo(0, 0)")
     time.sleep(delay)
+
+
+def global_screenshot_target_height(page, paths, site_config=None, page_config=None):
+    """Return the target PNG height for a baseline-height strategy."""
+
+    strategy = str(
+        global_screenshot_option(
+            site_config,
+            page_config,
+            "global_screenshot_height_strategy",
+            "stable",
+        )
+    ).strip().lower()
+
+    if strategy in ("", "stable", "natural"):
+        return None, strategy
+    if strategy != "baseline":
+        raise ValueError(
+            "global_screenshot_height_strategy must be 'stable', 'natural', "
+            f"or 'baseline', got: {strategy!r}"
+        )
+
+    baseline_path = paths.get("baseline")
+    if not baseline_path or not os.path.exists(baseline_path):
+        print("      global height strategy=baseline; baseline missing, using natural height")
+        return None, strategy
+
+    with Image.open(baseline_path) as baseline:
+        baseline_height = baseline.height
+
+    metrics = page_scroll_metrics(page)
+    current_height = int(metrics.get("scrollHeight") or 0)
+    print(
+        "      global height strategy=baseline "
+        f"target={baseline_height}px current_css={current_height}px"
+    )
+    return baseline_height, strategy
+
+
+def normalize_image_height(path, target_height):
+    """Crop or white-pad a PNG to a deterministic physical-pixel height."""
+
+    with Image.open(path).convert("RGB") as image:
+        if image.height == target_height:
+            return False
+
+        normalized = Image.new("RGB", (image.width, target_height), "white")
+        visible_height = min(image.height, target_height)
+        normalized.paste(image.crop((0, 0, image.width, visible_height)), (0, 0))
+        normalized.save(path)
+        return True
 
 
 def prepare_global_screenshot(
@@ -488,18 +606,28 @@ def prepare_global_screenshot(
         page,
         site_config=site_config,
         page_config=page_config,
-        max_scrolls=page_config.get("global_screenshot_max_scrolls", 80)
-        if page_config else 80,
-        delay=page_config.get("global_screenshot_scroll_delay", 0.2)
-        if page_config else 0.2,
+        max_scrolls=global_screenshot_option(
+            site_config, page_config, "global_screenshot_max_scrolls", 80
+        ),
+        delay=global_screenshot_option(
+            site_config, page_config, "global_screenshot_scroll_delay", 0.2
+        ),
+        max_passes=global_screenshot_option(
+            site_config, page_config, "global_screenshot_scroll_passes", 3
+        ),
     )
 
     if not wait_for_scroll_height_stable(
         page,
-        timeout=page_config.get("global_screenshot_height_timeout", timeout)
-        if page_config else timeout,
-        min_height=page_config.get("global_screenshot_min_height")
-        if page_config else None,
+        timeout=global_screenshot_option(
+            site_config, page_config, "global_screenshot_height_timeout", timeout
+        ),
+        required_stable=global_screenshot_option(
+            site_config, page_config, "global_screenshot_height_stable_checks", 4
+        ),
+        min_height=global_screenshot_option(
+            site_config, page_config, "global_screenshot_min_height"
+        ),
     ):
         raise Exception("scroll height is not stable")
 
@@ -507,17 +635,45 @@ def prepare_global_screenshot(
         page,
         site_config=site_config,
         page_config=page_config,
-        max_scrolls=page_config.get("global_screenshot_max_scrolls", 80)
-        if page_config else 80,
-        delay=page_config.get("global_screenshot_scroll_delay", 0.2)
-        if page_config else 0.2,
+        max_scrolls=global_screenshot_option(
+            site_config, page_config, "global_screenshot_max_scrolls", 80
+        ),
+        delay=global_screenshot_option(
+            site_config, page_config, "global_screenshot_scroll_delay", 0.2
+        ),
+        max_passes=global_screenshot_option(
+            site_config, page_config, "global_screenshot_scroll_passes", 3
+        ),
     )
 
-    if not page_config or page_config.get("global_screenshot_wait_for_images", True):
-        if not wait_for_visible_images(body, timeout=timeout):
-            raise Exception("wait for images timeout")
+    if global_screenshot_option(
+        site_config, page_config, "global_screenshot_wait_for_images", True
+    ):
+        image_timeout = global_screenshot_option(
+            site_config,
+            page_config,
+            "global_screenshot_image_timeout",
+            max(timeout, 30),
+        )
+        if not wait_for_rendered_page_images(page, timeout=image_timeout):
+            raise Exception("wait for rendered page images timeout")
+        if not wait_for_scroll_height_stable(
+            page,
+            timeout=global_screenshot_option(
+                site_config, page_config, "global_screenshot_height_timeout", timeout
+            ),
+            required_stable=global_screenshot_option(
+                site_config, page_config, "global_screenshot_height_stable_checks", 4
+            ),
+            min_height=global_screenshot_option(
+                site_config, page_config, "global_screenshot_min_height"
+            ),
+        ):
+            raise Exception("scroll height changed after image loading")
 
-    if page_config and page_config.get("global_screenshot_wait_for_fonts"):
+    if global_screenshot_option(
+        site_config, page_config, "global_screenshot_wait_for_fonts", False
+    ):
         page.evaluate("""
             () => document.fonts ? document.fonts.ready.then(() => true) : true
         """)
@@ -557,11 +713,28 @@ def capture_global_screenshot(ctx, page, before_capture=None):
             page,
             site_config=ctx.site_config,
             page_config=ctx.page_config,
-            timeout=ctx.page_config.get("global_screenshot_timeout", 15),
-            settle_delay=ctx.page_config.get("global_screenshot_settle_delay", 0.5),
+            timeout=global_screenshot_option(
+                ctx.site_config, ctx.page_config, "global_screenshot_timeout", 15
+            ),
+            settle_delay=global_screenshot_option(
+                ctx.site_config,
+                ctx.page_config,
+                "global_screenshot_settle_delay",
+                0.5,
+            ),
             before_capture=before_capture,
         )
+        target_height, height_strategy = global_screenshot_target_height(
+            page,
+            paths,
+            site_config=ctx.site_config,
+            page_config=ctx.page_config,
+        )
         page.screenshot(path=paths["current"], full_page=True)
+        if target_height:
+            normalize_image_height(paths["current"], target_height)
+            paths["capture_height_px"] = target_height
+        paths["capture_height_strategy"] = height_strategy
 
         if ctx.page_config.get("global_screenshot_crop_bottom_whitespace"):
             paths["cropped_bottom_whitespace"] = crop_bottom_whitespace(

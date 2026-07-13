@@ -1,6 +1,13 @@
 site: gracins_US
 base_url: https://www.gracins.com
 
+browser:
+  headed: false
+
+global_screenshot_height_strategy: baseline
+global_screenshot_scroll_passes: 3
+global_screenshot_height_stable_checks: 4
+
 screenshot_css:
   - |
     .react-responsive-modal-root {
@@ -77,6 +84,11 @@ pages:
     url: https://www.gracins.com/
     capture_global_screenshot: true
     capture_first_screen: true
+    stable_banner_index: 0
+    stable_display:
+      - selector: ".announcement--carousel .announcement__carousel-item"
+        index: 0
+        display: block
     dynamic_hide:
       replace_defaults: true
       selectors:
