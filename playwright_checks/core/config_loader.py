@@ -76,6 +76,55 @@ DEFAULT_DYNAMIC_HIDE = {
     "container_selector": "[id*='cbb'], [class*='cbb'], section, form, div",
 }
 
+# Review widgets are third-party, asynchronous content rather than a visual
+# regression target. Keep them out of captures even for pages that replace the
+# default dynamic-hide configuration.
+REVIEW_HIDE_SELECTORS = [
+    "body .jdgm-widget",
+    "body .jdgm-preview-badge",
+    "body .jdgm-rev-widg",
+    "body .jdgm-carousel-wrapper",
+    "body [id*='judgeme']",
+    "body [class*='jdgm']",
+    "body [class*='judge']",
+    "body .spr-badge",
+    # Ali Reviews uses both the full `alireviews` prefix and short `alr-`
+    # classes for its late-loading review notification.  The latter does not
+    # necessarily contain the word "review", so keep it in this shared list
+    # instead of limiting it to the global-capture configuration.
+    "body .alireviews-review-star-rating",
+    "body [id*='alireviews']",
+    "body [class*='alireviews']",
+    "body [data-alireviews]",
+    "body [id*='alr-']",
+    "body [class*='alr-']",
+    "body [id*='review']",
+    "body [class*='review']",
+    "body [data-review]",
+    # SHIREES renders its review carousel as a plain section whose image alt
+    # text is the only stable review marker.  Hide the whole section so it
+    # cannot change the page height between first-screen and full-page shots.
+    "body section:has(img[alt='Review Image'])",
+    "body [id*='loox']",
+    "body [class*='loox']",
+    "body [id*='yotpo']",
+    "body [class*='yotpo']",
+    "body [id*='stamped']",
+    "body [class*='stamped']",
+    "body [id*='okendo']",
+    "body [class*='okendo']",
+]
+
+# These blocks are legitimate storefront content, but their values are supplied
+# by inventory, shipping-date, and payment-provider services.  They can change
+# between two captures without a theme deployment and should not participate in
+# layout or visual comparisons.  Append them even when a page replaces the
+# default dynamic-hide list so all site configurations get the same protection.
+VOLATILE_HIDE_SELECTORS = [
+    "body .delivery-tips",
+    "body .product__section--payment-icons",
+]
+
 
 @lru_cache(maxsize=1)
 def load_settings():
@@ -238,6 +287,8 @@ def get_dynamic_hide_config(site_config=None, page_config=None):
     config = site_config if isinstance(site_config, dict) else load_site_config(site_config)
     merged = _merge_dynamic_hide(DEFAULT_DYNAMIC_HIDE, config.get("dynamic_hide"))
     merged = _merge_dynamic_hide(merged, page_config.get("dynamic_hide") if page_config else None)
+    merged["selectors"].extend(REVIEW_HIDE_SELECTORS)
+    merged["selectors"].extend(VOLATILE_HIDE_SELECTORS)
 
     for key in (
         "selectors",

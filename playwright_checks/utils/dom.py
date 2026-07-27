@@ -130,5 +130,51 @@ def hide_dynamic_elements(page, site_config=None, page_config=None):
                 el.style.setProperty('display', 'none', 'important');
             }
         });
+
+        // Product totals and the final pagination number are inventory data,
+        // not a visual-regression target.  Replace them with fixed-width text
+        // after functional count checks have run, keeping the surrounding
+        // control layout visible and comparable across captures.
+        const volatileTextRoots = document.querySelectorAll([
+            '.collection__page-sort',
+            '.collection__control-bar',
+            '.collection__horizontal-toolbar',
+            '.collection__page--full-width-filters',
+            '.collection__filter-toggleWrapper',
+            '.collection__sticky-header',
+            '.collection-filter',
+            '.pagination',
+            '.wt-pagination-wrapper',
+            '.filtering__pagination'
+        ].join(','));
+
+        volatileTextRoots.forEach(function(root) {
+            const walker = document.createTreeWalker(
+                root,
+                NodeFilter.SHOW_TEXT
+            );
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+            textNodes.forEach(function(node) {
+                let value = node.nodeValue || '';
+                value = value.replace(
+                    /\\b\\d+\\s+products\\b/gi,
+                    '0000 products'
+                );
+                value = value.replace(
+                    /Showing\\s+items\\s+\\d+\\s*-\\s*\\d+\\s+of\\s+\\d+\\.?/gi,
+                    'Showing items 00-00 of 0000.'
+                );
+                node.nodeValue = value;
+            });
+
+            root.querySelectorAll('a, span').forEach(function(item) {
+                const value = (item.textContent || '').trim();
+                if (/^\\d+$/.test(value) && Number(value) > 3) {
+                    item.textContent = '00';
+                }
+            });
+        });
         }
     """, hide_config)

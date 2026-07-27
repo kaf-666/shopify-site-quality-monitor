@@ -1,0 +1,237 @@
+site: shirees_US
+base_url: https://www.shirees.com
+
+browser:
+  headed: true
+
+global_screenshot_height_strategy: baseline
+global_screenshot_scroll_passes: 3
+global_screenshot_height_stable_checks: 4
+# Wait only for rendered images.  The capture helper ignores hidden alternate
+# media and now requires decode/currentSrc stability, preventing CDN image
+# candidates from changing between the global and module screenshots.
+global_screenshot_wait_for_images: true
+global_screenshot_image_timeout: 45
+global_screenshot_css:
+  - |
+    html {
+      overflow-y: scroll !important;
+      scrollbar-width: auto !important;
+    }
+    html::-webkit-scrollbar {
+      display: block !important;
+      width: 15px !important;
+      height: 15px !important;
+    }
+
+access_denied_patterns:
+  - "请稍候"
+  - "too many requests"
+  - "rate limit exceeded"
+
+screenshot_css:
+  - |
+    html {
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+    .react-responsive-modal-root {
+      display: none !important;
+    }
+    .announcement-bar__message,
+    .announcement-bar__message p,
+    .slideshow__slide {
+      animation: none !important;
+      transition: none !important;
+    }
+    .slideshow__slide:not(.is-selected) {
+      opacity: 0 !important;
+    }
+    .slideshow__slide.is-selected {
+      opacity: 1 !important;
+    }
+    @media screen and (max-width: 980px) {
+      [class*='ai-announcement-bar__slider'] {
+        transform: none !important;
+        transition: none !important;
+      }
+      [class*='ai-announcement-bar__item'] {
+        display: none !important;
+        animation: none !important;
+        transition: none !important;
+      }
+      [class*='ai-announcement-bar__item']:first-child {
+        display: block !important;
+      }
+    }
+
+dynamic_hide:
+  exclude_selectors:
+    - ".price"
+    - ".spr-badge"
+    - "[class*='price']"
+  selectors:
+    - ".sale-badge"
+    - ".card__badge"
+    - "[class*='sale-badge']"
+    - "[class*='product-sale']"
+    - ".shopify-payment-button"
+    - ".shopify-payment-button__button"
+    - "[data-shopify='payment-button']"
+    - "shopify-payment-terms"
+    - ".product-recommendations"
+    - "[id*='recommend']"
+    - "[class*='recommend']"
+    - "[id*='related']"
+    - "[class*='related-products']"
+    - "[id*='recently']"
+    - "[class*='recently']"
+    - ".ecomsend__Modal"
+    - "[class*='ecomsend']"
+    - "[id*='newsletter']"
+    - "[class*='newsletter']"
+    - "[id*='popup']"
+    - "[class*='popup']"
+    - "[id*='chat']"
+    - "[class*='chat']"
+    - "[id*='tidio']"
+    - "[class*='tidio']"
+    - "[id*='gorgias']"
+    - "[class*='gorgias']"
+    - "[id*='intercom']"
+    - "[class*='intercom']"
+    - "iframe[src*='tidio']"
+    - "iframe[src*='gorgias']"
+    - "iframe[src*='intercom']"
+  text_exact:
+    - frequently bought together
+    - more payment options
+    - buy it now
+  text_contains:
+    - pay with paypal
+    - afterpay
+    - as low as
+    - added to cart
+    - cart error
+    - sold out
+
+pages:
+  home:
+    url: https://www.shirees.com/
+    capture_global_screenshot: true
+    capture_first_screen: true
+    first_screen_wait_for_images: true
+    first_screen_wait_for_fonts: true
+    stable_banner_index: 0
+    stable_display:
+      - selector: ".announcement-bar__wrapper .announcement-bar__message"
+        index: 0
+        display: flex
+    first_screen_clip:
+      x: 0
+      y: 0
+      width: 1600
+      height: 900
+    expected_keywords:
+      - shirees
+    modules:
+      header_1:
+        - css
+        - ".shopify-section-group-header-group, header, .site-header"
+      header_2:
+        - css
+        - ".shopify-section-group-header-group .js-site-header, .js-site-header, .wt-header__aside, .header__main"
+      banner:
+        - css
+        - ".slideshow__slide.is-selected, section.slideshow-section, .slideshow"
+      collections:
+        - css
+        - "#main-content section.featured__collection-section, #main-content section[class*='featured']"
+      collections_1:
+        - xpath
+        - "(//*[@id='main-content']//section[contains(@class,'featured__collection-section') or contains(@class,'featured')])[2]"
+      cart_btn:
+        - css
+        - ".header__nav-below button.js-mini-cart-trigger"
+    dom_presence:
+      mobile_navigation_drawer:
+        - css
+        - "#slideout-mobile-navigation, [class*='mobile-nav']"
+      ajax_cart_drawer:
+        - css
+        - "#slideout-ajax-cart, [class*='cart-drawer']"
+    mobile:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 390
+        height: 844
+      modules:
+        cart_btn:
+          - css
+          - ".header__mobile__cart-links-container button.js-mini-cart-trigger"
+
+  collection:
+    url: https://www.shirees.com/collections/mother-dresses
+    capture_global_screenshot: true
+    capture_first_screen: true
+    expected_keywords:
+      - mother
+      - dresses
+    expected_count: 32
+    modules:
+      product_grid:
+        - css
+        - "#main-collection-product-grid, #product-grid, .collection-grid__wrapper"
+      filter:
+        - css
+        - ".collection__page-sort, .collection__control-bar, .collection__horizontal-toolbar, .collection__page--full-width-filters, .collection__filter-toggleWrapper, .collection__sticky-header, .collection-filter"
+      pagination:
+        - css
+        - ".pagination.desktop-12, .wt-pagination-wrapper, .pagination"
+    product_card:
+      - css
+      - "#main-collection-product-grid .product-index:not(.bannerads), #product-grid .card__container, .collection-grid__wrapper .grid__item.grid-product"
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
+
+  product:
+    url: https://www.shirees.com/collections/mother-dresses/products/jacquard-sheath-column-v-neck-floor-length-mother-of-the-bride-groom-dresses-with-ruched-waist-shi22500907
+    capture_global_screenshot: true
+    capture_first_screen: true
+    expected_keywords:
+      - jacquard
+      - sheath
+    require_reviews: false
+    modules:
+      gallery:
+        - css
+        - ".main__section .js-product-gallery, .main__section .product__section-images, .js-product-gallery, .product__section-images, .product__photos, media-gallery, .product__media-wrapper"
+      info:
+        - css
+        - ".main__section .product__section-contentWrapper, .main__section .product__section-content, .product__section-details, .product__info-wrapper, .product-single__meta"
+      add_to_cart:
+        - css
+        - ".main__section .AddtoCart, .main__section .js-ajax-submit, .AddtoCart, .js-ajax-submit, form[action*='/cart/add'] button[name='add'], button[name='add']"
+    variant_inputs:
+      - css
+      - ".main__section .swatches__container input, .main__section .product-form__input input, .main__section [class*='variant'] input, .main__section select.variant-options, .swatches__container input, .product-form__input input, [class*='variant'] input, select.variant-options, variant-radios input, variant-selects select"
+    variant_gallery_options:
+      - css
+      - ".main__section .product-single__thumbnails-item, .main__section .product-single__thumbnail, .main__section .js-thumb-item, .product-single__thumbnails-item, .product-single__thumbnail, .js-thumb-item"
+    desktop:
+      first_screen_clip:
+        x: 0
+        y: 0
+        width: 1600
+        height: 900
+    mobile:
+      reload_before_module_capture: true

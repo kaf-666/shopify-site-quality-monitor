@@ -10,6 +10,14 @@ global_screenshot_height_stable_checks: 4
 
 screenshot_css:
   - |
+    html {
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
     .react-responsive-modal-root {
       display: none !important;
     }
@@ -335,6 +343,10 @@ pages:
       - jersey
       - flowers
     require_reviews: false
+    content_checks:
+      price:
+        - css
+        - ".product__section-details .price__pricing-group dd"
     modules:
       gallery:
         - css

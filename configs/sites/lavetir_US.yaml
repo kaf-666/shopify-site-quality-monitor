@@ -25,6 +25,29 @@ screenshot_css:
     .slideshow-section .swiper-pagination-bullet:first-child {
       opacity: 1 !important;
     }
+    html {
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+    @media screen and (max-width: 980px) {
+      .wt-announcement__container {
+        transform: none !important;
+        transition: none !important;
+      }
+      .wt-announcement__body {
+        display: none !important;
+        animation: none !important;
+        transition: none !important;
+      }
+      .wt-announcement__body:first-child {
+        display: flex !important;
+      }
+    }
 
 dynamic_hide:
   exclude_selectors:
@@ -173,4 +196,16 @@ pages:
         width: 1600
         height: 900
     mobile:
+      # The breadcrumb font can settle with a 3px taller line box on mobile,
+      # which shifts the complete first-screen viewport while all product
+      # modules remain unchanged. Lock its capture-only vertical rhythm.
+      screenshot_css:
+        - |
+          .breadcrumbs__wrapper {
+            padding-block: 10.4px !important;
+          }
+          /* Delivery estimates are recalculated on every visit. */
+          .deliverynew {
+            visibility: hidden !important;
+          }
       reload_before_module_capture: true

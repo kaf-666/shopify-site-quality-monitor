@@ -7,6 +7,17 @@ global_screenshot_height_strategy: baseline
 global_screenshot_scroll_passes: 3
 global_screenshot_height_stable_checks: 4
 
+screenshot_css:
+  - |
+    html {
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
+
 dynamic_hide:
   selectors:
     - ".price"
@@ -35,6 +46,10 @@ dynamic_hide:
     - as low as
 
 global_screenshot_hide_selectors:
+  # This Shopify section is populated with changing recommendations. Use its
+  # stable theme-section suffix instead of its last-sibling position, which
+  # differs between desktop and mobile markup.
+  - "[id$='__featured_collection_bxwFEC']"
   - ".alireviews-review-star-rating"
   - "[id*='alireviews']"
   - "[class*='alireviews']"

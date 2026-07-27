@@ -7,6 +7,16 @@ browser:
 global_screenshot_height_strategy: baseline
 global_screenshot_scroll_passes: 3
 global_screenshot_height_stable_checks: 4
+global_screenshot_css:
+  - |
+    html {
+      scrollbar-width: auto !important;
+    }
+    html::-webkit-scrollbar {
+      display: block !important;
+      width: 15px !important;
+      height: 15px !important;
+    }
 
 access_denied_patterns:
   - Performing security verification
@@ -15,6 +25,14 @@ access_denied_patterns:
 
 screenshot_css:
   - |
+    html {
+      scrollbar-width: none !important;
+    }
+    html::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+    }
     .announcement-bar__message,
     .announcement-bar__message p {
       animation: none !important;
@@ -113,6 +131,11 @@ pages:
       - selector: ".announcement-bar__wrapper .announcement-bar__message"
         index: 0
         display: flex
+    screenshot_css:
+      - |
+        html {
+          overflow-y: scroll !important;
+        }
     dynamic_hide:
       replace_defaults: true
       selectors:
@@ -120,6 +143,12 @@ pages:
         - ".shopify-payment-button__button"
         - "[data-shopify='payment-button']"
         - "shopify-payment-terms"
+        - ".jdgm-widget"
+        - ".jdgm-preview-badge"
+        - ".jdgm-rev-widg"
+        - ".jdgm-carousel-wrapper"
+        - "[id*='judgeme']"
+        - "section.featured__collection-section:has(a[href='/collections/white-dresses-by-nafori'])"
         - ".product-recommendations"
         - "[id*='recommend']"
         - "[class*='recommend']"
@@ -199,7 +228,7 @@ pages:
       modules:
         cart_btn:
           - css
-          - ".header__mobile__cart-links-container"
+          - ".header__mobile__cart-links-container button.js-mini-cart-trigger:visible"
 
   collection:
     url: https://www.nafori.com/collections/evening-dresses
@@ -263,10 +292,6 @@ pages:
     product_card:
       - css
       - "#main-collection-product-grid .product-index:not(.bannerads)"
-    stable_card_media:
-      selector: "img"
-      default_index: 0
-      hover_index: 0
     dom_presence:
       mobile_navigation_drawer:
         - css

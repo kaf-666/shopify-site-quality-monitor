@@ -9,145 +9,149 @@ from playwright_checks.utils.dom import hide_dynamic_elements
 from playwright_checks.utils.waits import build_paths, locate_element
 
 
-def wait_for_images(element, timeout=10):
+IMAGE_STABILITY_SCRIPT = """
+    async (container, options) => {
+        const images = Array.from(container.querySelectorAll('img'));
+        const tracked = [];
+
+        for (const img of images) {
+            const rect = img.getBoundingClientRect();
+            const style = window.getComputedStyle(img);
+            const rendered =
+                rect.width > 0
+                && rect.height > 0
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0';
+
+            const inViewport =
+                rect.bottom > 0
+                && rect.right > 0
+                && rect.top < window.innerHeight
+                && rect.left < window.innerWidth;
+
+            if (options.visibleOnly && !rendered) continue;
+            if (options.viewportOnly && (!rendered || !inViewport)) continue;
+
+            if (img.loading === 'lazy') img.loading = 'eager';
+            if (img.dataset.src && !img.getAttribute('src')) {
+                img.src = img.dataset.src;
+            }
+            if (img.dataset.srcset && !img.getAttribute('srcset')) {
+                img.srcset = img.dataset.srcset;
+            }
+
+            tracked.push(img);
+        }
+
+        await Promise.all(tracked.map(async (img) => {
+            if (!img.complete || img.naturalWidth === 0) return;
+            if (typeof img.decode !== 'function') return;
+            try {
+                await img.decode();
+            } catch (_) {
+                // A rejected decode is handled by the readiness check below.
+            }
+        }));
+
+        await new Promise((resolve) => requestAnimationFrame(
+            () => requestAnimationFrame(resolve)
+        ));
+
+        const ready = tracked.every(
+            (img) => img.complete && img.naturalWidth > 0
+        );
+        const signature = tracked.map((img) => {
+            const rect = img.getBoundingClientRect();
+            return [
+                img.currentSrc || img.src || '',
+                img.naturalWidth,
+                img.naturalHeight,
+                Math.round(rect.width * 100) / 100,
+                Math.round(rect.height * 100) / 100,
+            ];
+        });
+
+        return {ready, signature};
+    }
+"""
+
+
+def _wait_for_stable_images(
+    element,
+    timeout=10,
+    visible_only=False,
+    viewport_only=False,
+    label="images",
+):
     end_time = time.time() + timeout
+    previous_signature = None
+    stable_count = 0
+    required_stable = 2
 
     while time.time() < end_time:
-        ready = element.evaluate("""
-            (container) => {
-                const imgs = container.querySelectorAll('img');
+        state = element.evaluate(
+            IMAGE_STABILITY_SCRIPT,
+            {
+                "visibleOnly": bool(visible_only),
+                "viewportOnly": bool(viewport_only),
+            },
+        )
+        ready = bool(state.get("ready"))
+        signature = state.get("signature")
 
-                if (imgs.length === 0) return true;
+        if ready and signature == previous_signature:
+            stable_count += 1
+            if stable_count >= required_stable:
+                time.sleep(0.2)
+                return True
+        else:
+            stable_count = 0
 
-                for (let i = 0; i < imgs.length; i++) {
-                    const img = imgs[i];
-
-                    if (img.loading === 'lazy') {
-                        img.loading = 'eager';
-                    }
-
-                    if (img.dataset.src && !img.getAttribute('src')) {
-                        img.src = img.dataset.src;
-                    }
-
-                    if (img.dataset.srcset && !img.getAttribute('srcset')) {
-                        img.srcset = img.dataset.srcset;
-                    }
-
-                    if (!img.complete || img.naturalWidth === 0) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-        """)
-
-        if ready:
-            time.sleep(0.3)
-            return True
-
+        previous_signature = signature if ready else None
         time.sleep(0.3)
 
-    print(f"      wait for images timeout ({timeout}s)")
+    print(f"      wait for {label} timeout ({timeout}s)")
     return False
+
+
+def wait_for_images(element, timeout=10):
+    return _wait_for_stable_images(
+        element,
+        timeout=timeout,
+        visible_only=False,
+        label="images",
+    )
 
 
 def wait_for_visible_images(element, timeout=10):
-    end_time = time.time() + timeout
+    return _wait_for_stable_images(
+        element,
+        timeout=timeout,
+        visible_only=True,
+        label="visible images",
+    )
 
-    while time.time() < end_time:
-        ready = element.evaluate("""
-            (container) => {
-                const imgs = container.querySelectorAll('img');
 
-                for (let i = 0; i < imgs.length; i++) {
-                    const img = imgs[i];
-                    const rect = img.getBoundingClientRect();
-                    const style = window.getComputedStyle(img);
-                    const visible =
-                        rect.width > 0
-                        && rect.height > 0
-                        && style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && style.opacity !== '0';
-
-                    if (!visible) continue;
-
-                    if (img.loading === 'lazy') {
-                        img.loading = 'eager';
-                    }
-
-                    if (img.dataset.src && !img.getAttribute('src')) {
-                        img.src = img.dataset.src;
-                    }
-
-                    if (img.dataset.srcset && !img.getAttribute('srcset')) {
-                        img.srcset = img.dataset.srcset;
-                    }
-
-                    if (!img.complete || img.naturalWidth === 0) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-        """)
-
-        if ready:
-            time.sleep(0.3)
-            return True
-
-        time.sleep(0.3)
-
-    print(f"      wait for visible images timeout ({timeout}s)")
-    return False
+def wait_for_viewport_images(element, timeout=10):
+    return _wait_for_stable_images(
+        element,
+        timeout=timeout,
+        visible_only=True,
+        viewport_only=True,
+        label="viewport images",
+    )
 
 
 def wait_for_rendered_page_images(page, timeout=30):
     """Wait for every rendered image, including ones activated by page scrolling."""
-
-    end_time = time.time() + timeout
-
-    while time.time() < end_time:
-        ready = page.evaluate("""
-            () => {
-                const images = Array.from(document.images || []);
-
-                return images.every((img) => {
-                    const style = window.getComputedStyle(img);
-                    const rect = img.getBoundingClientRect();
-                    const rendered =
-                        rect.width > 0
-                        && rect.height > 0
-                        && style.display !== 'none'
-                        && style.visibility !== 'hidden'
-                        && style.opacity !== '0';
-
-                    if (!rendered) return true;
-
-                    if (img.loading === 'lazy') img.loading = 'eager';
-                    if (img.dataset.src && !img.getAttribute('src')) {
-                        img.src = img.dataset.src;
-                    }
-                    if (img.dataset.srcset && !img.getAttribute('srcset')) {
-                        img.srcset = img.dataset.srcset;
-                    }
-
-                    return img.complete && img.naturalWidth > 0;
-                });
-            }
-        """)
-
-        if ready:
-            time.sleep(0.3)
-            return True
-
-        time.sleep(0.3)
-
-    print(f"      wait for rendered page images timeout ({timeout}s)")
-    return False
+    body = page.locator("body").first
+    return _wait_for_stable_images(
+        body,
+        timeout=timeout,
+        visible_only=True,
+        label="rendered page images",
+    )
 
 
 def wait_for_reviews(page, timeout=10):
@@ -355,13 +359,20 @@ def _selector_list(value):
 
 def hide_global_screenshot_elements(page, site_config=None, page_config=None):
     selectors = []
+    css_blocks = []
     if site_config:
         selectors.extend(
             _selector_list(site_config.get("global_screenshot_hide_selectors"))
         )
+        css_blocks.extend(
+            _selector_list(site_config.get("global_screenshot_css"))
+        )
     if page_config:
         selectors.extend(
             _selector_list(page_config.get("global_screenshot_hide_selectors"))
+        )
+        css_blocks.extend(
+            _selector_list(page_config.get("global_screenshot_css"))
         )
 
     seen = set()
@@ -372,7 +383,7 @@ def hide_global_screenshot_elements(page, site_config=None, page_config=None):
     ]
 
     page.evaluate("""
-        (selectors) => {
+        ({ selectors, css }) => {
             const styleId = 'global-screenshot-hide';
             let style = document.getElementById(styleId);
             if (!style) {
@@ -383,15 +394,26 @@ def hide_global_screenshot_elements(page, site_config=None, page_config=None):
             style.innerHTML = selectors.length
                 ? selectors.join(',\\n') + ' { display: none !important; }'
                 : '';
+
+            const cssStyleId = 'global-screenshot-css';
+            let cssStyle = document.getElementById(cssStyleId);
+            if (!cssStyle) {
+                cssStyle = document.createElement('style');
+                cssStyle.id = cssStyleId;
+                document.head.appendChild(cssStyle);
+            }
+            cssStyle.textContent = css.join('\\n');
         }
-    """, selectors)
+    """, {"selectors": selectors, "css": css_blocks})
 
 
 def clear_global_screenshot_elements(page):
     page.evaluate("""
         () => {
-            const style = document.getElementById('global-screenshot-hide');
-            if (style) style.remove();
+            ['global-screenshot-hide', 'global-screenshot-css'].forEach((id) => {
+                const style = document.getElementById(id);
+                if (style) style.remove();
+            });
         }
     """)
 
@@ -415,8 +437,8 @@ def prepare_first_screen(
     body.wait_for(state="visible", timeout=10000)
 
     if page_config and page_config.get("first_screen_wait_for_images"):
-        if not wait_for_images(body, timeout=timeout):
-            raise Exception("wait for images timeout")
+        if not wait_for_viewport_images(body, timeout=timeout):
+            raise Exception("wait for viewport images timeout")
 
     if page_config and page_config.get("first_screen_wait_for_fonts"):
         page.evaluate("""
@@ -570,15 +592,18 @@ def global_screenshot_target_height(page, paths, site_config=None, page_config=N
 
 
 def normalize_image_height(path, target_height):
-    """Crop or white-pad a PNG to a deterministic physical-pixel height."""
+    """White-pad a PNG to the baseline height without discarding page content."""
 
     with Image.open(path).convert("RGB") as image:
-        if image.height == target_height:
+        # A baseline is useful for keeping a shorter page comparable, but it
+        # must never act as a maximum height.  Full-page screenshots that grow
+        # past an older baseline contain real content near the bottom; cropping
+        # them made the resulting "global" image incomplete.
+        if image.height >= target_height:
             return False
 
         normalized = Image.new("RGB", (image.width, target_height), "white")
-        visible_height = min(image.height, target_height)
-        normalized.paste(image.crop((0, 0, image.width, visible_height)), (0, 0))
+        normalized.paste(image, (0, 0))
         normalized.save(path)
         return True
 
@@ -733,7 +758,8 @@ def capture_global_screenshot(ctx, page, before_capture=None):
         page.screenshot(path=paths["current"], full_page=True)
         if target_height:
             normalize_image_height(paths["current"], target_height)
-            paths["capture_height_px"] = target_height
+        with Image.open(paths["current"]) as captured_image:
+            paths["capture_height_px"] = captured_image.height
         paths["capture_height_strategy"] = height_strategy
 
         if ctx.page_config.get("global_screenshot_crop_bottom_whitespace"):

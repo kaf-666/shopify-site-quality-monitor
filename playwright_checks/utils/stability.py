@@ -93,12 +93,38 @@ def stabilize_card_media(card, page_config=None, hover=False):
     """Keep product-card media deterministic before a normal or hover capture."""
 
     config = _stable_card_media_config(page_config)
-    if not config:
-        return
-
     card.evaluate(
         """
-        (card, config) => {
+        (card, options) => {
+            // A number of the storefronts use the same Shopify theme pattern:
+            // the alternate image lives in `.reveal .hidden` and CSS :hover
+            // raises that wrapper above the primary image.  Locator screenshots
+            // can reposition the card after `hover()`, which makes the browser
+            // drop that transient state just before capture.  Pin the wrapper
+            // explicitly so both normal and hover screenshots are deterministic.
+            const reveal = card.querySelector('.reveal');
+            const hiddenMedia = reveal && reveal.querySelector('.hidden');
+            if (hiddenMedia) {
+                hiddenMedia.style.setProperty('animation', 'none', 'important');
+                hiddenMedia.style.setProperty('transition', 'none', 'important');
+                hiddenMedia.style.setProperty('display', 'block', 'important');
+                hiddenMedia.style.setProperty('visibility', 'visible', 'important');
+                hiddenMedia.style.setProperty(
+                    'opacity',
+                    options.hover ? '1' : '0',
+                    'important'
+                );
+                hiddenMedia.style.setProperty(
+                    'z-index',
+                    options.hover ? '1' : '-1',
+                    'important'
+                );
+                hiddenMedia.style.setProperty('pointer-events', 'none', 'important');
+            }
+
+            const config = options.config;
+            if (!config) return;
+
             const images = Array.from(card.querySelectorAll(config.selector));
             if (!images.length) return;
 
@@ -116,7 +142,12 @@ def stabilize_card_media(card, page_config=None, hover=False):
         }
         """,
         {
-            "selector": config["selector"],
-            "hover_index": config["hover_index"] if hover else config["default_index"],
+            "hover": bool(hover),
+            "config": {
+                "selector": config["selector"],
+                "hover_index": (
+                    config["hover_index"] if hover else config["default_index"]
+                ),
+            } if config else None,
         },
     )

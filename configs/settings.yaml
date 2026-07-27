@@ -38,3 +38,18 @@ visual:
   change_threshold: 0.005
   warning_threshold: 0.02
   stabilize_timeout: 10
+  width_tolerance_px: 0
+  # Shopify 页尾与异步区块偶发产生少量高度漂移；超过 25px 仍按结构变化失败。
+  height_tolerance_px: 25
+  alignment_tolerance_px: 1
+  alignment_max_pixels: 5000000
+  perceptual_fallback_enabled: true
+  perceptual_blur_radius: 1.75
+  perceptual_band_height_px: 120
+  perceptual_alignment_tolerance_px: 6
+  perceptual_max_pixels: 5000000
+  # 超长全页图超过模糊比较的内存预算时，用分块亮度结构指纹识别 CDN 重编码。
+  large_image_structural_fallback_enabled: true
+  structural_tile_size_px: 128
+  structural_hash_distance_threshold: 0.13
+  structural_changed_tile_fraction_threshold: 0.15
