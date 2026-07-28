@@ -1,29 +1,106 @@
 # Shopify Site Quality Monitor
 
-This project is a Playwright-based visual regression test scaffold for Shopify sites.
+Playwright-based visual regression and runtime-health monitoring for Shopify
+storefronts. The runner checks Home, collection (PLP), and product (PDP) pages
+across configured desktop and mobile viewports.
 
-## Structure
+Current site configurations:
 
-- `configs/settings.yaml`: shared runtime settings.
-- `configs/sites/*.yaml`: site-specific URLs, modules, plugin selectors, and dynamic-hide rules.
-- `playwright_checks/core/`: config loading, browser driver, logging, and result writing.
-- `playwright_checks/pages/`: page object skeletons for home, collection, and product pages.
-- `playwright_checks/checks/`: safe page checks and visual checks for each page type.
-- `playwright_checks/flows/`: explicit business flows with real user actions and side effects.
-- `playwright_checks/utils/`: screenshot capture, DOM helpers, waits, visual comparison, and dynamic element handling.
-- `playwright_checks/runner/main.py`: Playwright check runner.
-- `baselines/`: reviewed visual baseline images for the new storage convention.
-- `artifacts/`: per-run current and diff images.
-- `screenshots/`: legacy captured baseline/current/diff images; existing baselines are still read for compatibility.
-- `reports/`: JSON test result output.
+- `gracins_US`
+- `lavetir_US`
+- `mondressy_UK`
+- `mondressy_US` (the default)
+- `nafori_US`
+- `shirees_US`
 
-## Run
+## Project layout
+
+- `configs/settings.yaml`: shared browser, viewport, visual-comparison, path,
+  and runtime-health defaults.
+- `configs/sites/*.yaml`: site URLs, selectors, capture rules, and per-site or
+  per-page overrides.
+- `playwright_checks/core/`: configuration, browser setup, request-header
+  injection, paths, logging, and result writing.
+- `playwright_checks/pages/`: Home, PLP, and PDP page objects.
+- `playwright_checks/checks/`: read-only structural and visual checks.
+- `playwright_checks/runtime/`: console, page, network, loading, rendering,
+  retry, scoring, evidence, and gray-summary logic.
+- `playwright_checks/utils/`: capture, stabilization, DOM, dynamic-content,
+  and image-comparison helpers.
+- `playwright_checks/flows/`: explicitly invoked business flows. Only
+  `add_to_cart_flow` currently performs a real flow; search, cart, and login
+  modules are placeholders.
+- `playwright_checks/tests/`: unit, Playwright fixture, integration, Jenkins,
+  signed-header, and visual-comparison tests.
+- `baselines/`: reviewed baseline images.
+- `artifacts/<run-id>/`: current images, diffs, runtime evidence, and a copy of
+  the JSON results for one run.
+- `reports/visual-results.json`: latest combined visual and page-health results.
+- `screenshots/`: legacy baseline location, still readable when fallback is
+  enabled.
+
+## Setup
+
+Windows PowerShell:
 
 ```powershell
-.\.venv\Scripts\python.exe run_all.py
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-By default the runner executes the viewports listed in `configs/settings.yaml`:
+`configs/settings.yaml` defaults to the installed Chrome channel and headed
+mode, although a site configuration can override this. To use Playwright's
+bundled Chromium in headless mode:
+
+```powershell
+$env:PLAYWRIGHT_BROWSER_CHANNEL="chromium"
+$env:PLAYWRIGHT_HEADED="0"
+```
+
+## Validate configuration
+
+Validate YAML, required page configuration, selector shapes, runtime-health
+settings, and baseline directories without opening a browser:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py --validate-config --site mondressy_US --viewport desktop
+```
+
+Missing baseline directories are reported as non-blocking validation warnings.
+
+## Run checks
+
+Prefer the command-line options exposed by `run_all.py`:
+
+```powershell
+# All configured viewports and all three page suites for the default site
+.\.venv\Scripts\python.exe run_all.py
+
+# One site, viewport, and page suite
+.\.venv\Scripts\python.exe run_all.py --site lavetir_US --viewport mobile --page product
+
+# Explicitly select every configured viewport and page suite
+.\.venv\Scripts\python.exe run_all.py --viewport all --page all
+```
+
+The first and third examples use the default `mondressy_US` configuration and
+therefore require the signed-request environment variables described below.
+
+Supported values:
+
+- `--site`: any name under `configs/sites/`.
+- `--viewport`: `desktop`, `mobile`, or `all`.
+- `--page`: `home`, `collection`, `product`, or `all`.
+
+The equivalent environment variables remain supported:
+
+- `VISUAL_SITE_CONFIG`
+- `VISUAL_VIEWPORT`
+- `VISUAL_PAGE`
+- `VISUAL_RUN_ID` (optional stable artifact directory name)
+
+By default, viewports come from `configs/settings.yaml`:
 
 ```yaml
 run_viewports:
@@ -31,58 +108,143 @@ run_viewports:
   - mobile
 ```
 
-Switch site config with PowerShell:
+### Mondressy US signed requests
+
+An actual `mondressy_US` browser run requires all three environment variables
+below. Configuration validation and runs for the other sites do not require
+them.
 
 ```powershell
-$env:VISUAL_SITE_CONFIG="mondressy_UK"; .\.venv\Scripts\python.exe run_all.py
+$env:MONDRESSY_US_SHOPIFY_SIGNATURE="<secret>"
+$env:MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT="<secret>"
+$env:MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT="<secret>"
+.\.venv\Scripts\python.exe run_all.py --site mondressy_US --viewport desktop --page home
 ```
 
-Run only one viewport:
+The values are injected as `Signature`, `Signature-Input`, and
+`Signature-Agent` only for exact `mondressy.com`/`www.mondressy.com` requests.
+Do not commit these values.
+
+## Baselines and visual policy
+
+Initialize missing local baselines only when intentionally reviewing a new
+baseline set:
 
 ```powershell
-$env:VISUAL_VIEWPORT="mobile"; .\.venv\Scripts\python.exe run_all.py
+$env:ALLOW_BASELINE_INIT="1"
+.\.venv\Scripts\python.exe run_all.py --site lavetir_US --viewport mobile
 ```
 
-Initialize missing baselines for a new viewport:
+New baselines are written to:
+
+```text
+baselines/<site>/<viewport>/<page>/
+```
+
+Existing baselines under `screenshots/**/baseline` remain readable while
+`paths.legacy_baseline_fallback` (or
+`VISUAL_LEGACY_BASELINE_FALLBACK`) is enabled.
+
+Visual warnings are non-blocking locally by default. Make them fail the run
+with:
 
 ```powershell
-$env:VISUAL_VIEWPORT="mobile"; $env:ALLOW_BASELINE_INIT="1"; .\.venv\Scripts\python.exe run_all.py
+$env:VISUAL_STRICT_WARNINGS="1"
+.\.venv\Scripts\python.exe run_all.py --site lavetir_US
 ```
 
-New baseline initialization writes to `baselines/`. Existing legacy baselines under
-`screenshots/**/baseline` remain readable while the baseline set is migrated.
-
-Run an explicit side-effect flow:
+When `CI=true` or `JENKINS_URL` is present, visual warnings are strict by
+default. CI baseline initialization requires both explicit flags:
 
 ```powershell
-$env:ALLOW_SIDE_EFFECT_FLOW="1"; .\.venv\Scripts\python.exe -m playwright_checks.flows.add_to_cart_flow
+$env:ALLOW_BASELINE_INIT="1"
+$env:FORCE_BASELINE_INIT="1"
+.\.venv\Scripts\python.exe run_all.py --site lavetir_US
 ```
 
-Side-effect flows are disabled by default so visual regression does not perform
-real add-to-cart, checkout, or login actions.
+Baseline updates should normally be reviewed locally and committed under
+`baselines/`, rather than generated automatically in CI.
 
-## CI / Jenkins
+## Runtime-health monitoring
 
-When `CI=true` is detected, or when `JENKINS_URL` is present, visual warnings are
-treated as failures by default. Local runs keep warnings non-blocking by default.
-To make local warnings fail the run, set:
+Runtime monitoring is enabled in `configs/settings.yaml`. It records evidence
+for signals such as failed requests, HTTP errors, console/page errors, dialogs,
+page crashes, blank/error pages, missing critical components, and persistent
+loading states. Configuration is merged from shared, site, and page settings.
+
+The current default is report-only:
+
+```yaml
+runtime_health:
+  enabled: true
+  reporting:
+    report_only: true
+    affect_exit_code: false
+```
+
+Runtime findings therefore remain visible in page summaries and evidence but
+do not independently fail the process. These environment overrides are
+available:
+
+- `RUNTIME_HEALTH_ENABLED`
+- `RUNTIME_HEALTH_REPORT_ONLY`
+- `RUNTIME_HEALTH_AFFECT_EXIT_CODE`
+- `RUNTIME_HEALTH_FAIL_ON_FAILED`
+- `RUNTIME_HEALTH_FAIL_ON_WARNING`
+- `RUNTIME_HEALTH_RECOVERED_STATUS` (`passed`, `warning`, or `failed`)
+
+To enforce failed runtime-health results:
 
 ```powershell
-$env:VISUAL_STRICT_WARNINGS="1"; .\.venv\Scripts\python.exe run_all.py
+$env:RUNTIME_HEALTH_REPORT_ONLY="0"
+$env:RUNTIME_HEALTH_AFFECT_EXIT_CODE="1"
+$env:RUNTIME_HEALTH_FAIL_ON_FAILED="1"
+.\.venv\Scripts\python.exe run_all.py --site lavetir_US
 ```
 
-CI/Jenkins runs do not automatically initialize missing baselines, even when
-`ALLOW_BASELINE_INIT=1` is set. To force baseline initialization in CI, both
-variables must be set:
+Run evidence is written beneath:
+
+```text
+artifacts/<run-id>/<site>/<viewport>/<page>/runtime/
+```
+
+## Side-effect flow
+
+Read-only visual checks do not add to cart, log in, or check out. The implemented
+add-to-cart flow must be enabled explicitly and should be run only in an
+isolated test context:
 
 ```powershell
-$env:ALLOW_BASELINE_INIT="1"; $env:FORCE_BASELINE_INIT="1"; .\.venv\Scripts\python.exe run_all.py
+$env:ALLOW_SIDE_EFFECT_FLOW="1"
+.\.venv\Scripts\python.exe -m playwright_checks.flows.add_to_cart_flow
 ```
 
-Automatic baseline updates in CI are not recommended. Baseline changes should be
-reviewed manually and committed under `baselines/`.
+The flow clears the cart before and after its check, selects available product
+options, clicks Add to Cart, and verifies that `/cart.js` item count increases.
+It uses the currently selected site configuration.
 
-Recommended Jenkins archive paths:
+## Tests
 
-- `artifacts/**`
-- `reports/visual-results.json`
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s playwright_checks/tests -v
+```
+
+## Jenkins
+
+The current `Jenkinsfile` is a deliberately narrow, manually triggered
+Mondressy US runtime gray validation. It:
+
+1. Rejects non-user-triggered builds.
+2. Binds three Jenkins string credentials with IDs matching the Mondressy
+   environment-variable names above.
+3. Installs dependencies and Playwright Chromium, then smoke-tests browser
+   launch.
+4. Runs only `mondressy_US` Home on desktop in an intercepted cold context.
+5. Keeps runtime health report-only, makes visual warnings strict, and disables
+   baseline initialization and side-effect flows.
+6. Validates the generated evidence with
+   `playwright_checks.runtime.gray_summary`.
+7. Archives `artifacts/<VISUAL_RUN_ID>/**` and
+   `reports/visual-results.json`.
+
+This pipeline is not the all-sites/full-viewport regression suite.
