@@ -3,23 +3,33 @@ import os
 from playwright.sync_api import sync_playwright
 
 from playwright_checks.core.config_loader import load_settings, load_site_config
+from playwright_checks.core.request_headers import (
+    install_signed_request_routing,
+    load_signed_request_headers,
+)
 from playwright_checks.core.viewport import get_viewport_config
 
 
 def init_browser(site_config=None):
-    """Start Playwright with a deterministic Chrome context."""
+    """Start Playwright with a deterministic browser context."""
 
-    playwright = sync_playwright().start()
     settings = load_settings()
     configured_site = site_config or load_site_config()
+    load_signed_request_headers(configured_site)
+    playwright = sync_playwright().start()
     browser_settings = dict(settings.get("browser", {}))
     site_browser_settings = configured_site.get("browser", {})
     browser_settings.update(site_browser_settings)
     viewport_config = get_viewport_config()
 
-    channel = os.environ.get(
+    configured_channel = os.environ.get(
         "PLAYWRIGHT_BROWSER_CHANNEL",
         browser_settings.get("channel", "chrome"),
+    )
+    channel = (
+        None
+        if str(configured_channel or "").strip().lower() == "chromium"
+        else configured_channel
     )
     headed_override = os.environ.get("PLAYWRIGHT_HEADED")
     if "headed" in site_browser_settings:
@@ -38,13 +48,18 @@ def init_browser(site_config=None):
         f"({mode_source}, site={configured_site.get('site', 'unknown')})"
     )
 
-    browser = playwright.chromium.launch(
-        channel=channel,
-        headless=headless,
-        args=[
+    launch_options = {
+        "headless": headless,
+        "args": [
             "--disable-gpu",
             "--disable-blink-features=AutomationControlled",
         ],
+    }
+    if channel:
+        launch_options["channel"] = channel
+
+    browser = playwright.chromium.launch(
+        **launch_options,
     )
 
     viewport = {
@@ -64,6 +79,7 @@ def init_browser(site_config=None):
     context = browser.new_context(
         **context_options,
     )
+    install_signed_request_routing(context, configured_site)
     context.set_default_timeout(30000)
     context.set_default_navigation_timeout(45000)
 

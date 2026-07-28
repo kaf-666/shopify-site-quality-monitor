@@ -226,6 +226,19 @@ class RuntimeEvidenceStore:
                 "recovered_after_retry": recovered_after_retry,
                 "retry_count": max(0, len(attempts) - 1),
                 "runtime_score": payload.get("runtime_score"),
+                "runtime_mode": payload.get("runtime_mode"),
+                "runtime_affects_exit_code": payload.get(
+                    "runtime_affects_exit_code",
+                    False,
+                ),
+                "runtime_fail_on_failed": payload.get(
+                    "runtime_fail_on_failed",
+                    True,
+                ),
+                "runtime_fail_on_warning": payload.get(
+                    "runtime_fail_on_warning",
+                    False,
+                ),
                 "primary_failure_type": payload.get("primary_failure_type"),
                 "primary_failure_reason": payload.get("primary_failure_reason"),
                 "event_counts": payload.get("event_counts", {}),
@@ -234,6 +247,11 @@ class RuntimeEvidenceStore:
                     {},
                 ),
                 "findings": payload.get("findings", []),
+                "request_header_injection": payload.get(
+                    "request_header_injection",
+                ),
+                "http_cache_mode": payload.get("http_cache_mode"),
+                "run_profile": payload.get("run_profile"),
                 "attempts": attempts,
             }
         )

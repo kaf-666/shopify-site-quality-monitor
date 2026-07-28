@@ -1,5 +1,6 @@
 from playwright_checks.core.config_loader import get_runtime_health_config
 from playwright_checks.core.paths import current_run_id, relative_to_project
+from playwright_checks.core.request_headers import signed_request_profile
 from playwright_checks.core.test_results import (
     add_result,
     get_page_visual_status,
@@ -39,6 +40,7 @@ class RuntimeHealthSession:
         self.page_config = page_config
         self.page_name = page_name
         self.site = site_config.get("site", "unknown")
+        self.request_profile = signed_request_profile(site_config)
         self.config = get_runtime_health_config(site_config, page_config)
         self.config["_page_name"] = page_name
         self.navigation = NavigationResult(requested_url=page_config["url"])
@@ -272,6 +274,7 @@ class RuntimeHealthSession:
 
         status = runtime_status(findings)
         primary = primary_finding(findings)
+        policy = runtime_reporting_policy(self.config)
         evidence_health = dict(health)
         evidence_health.pop("body_text", None)
         attempt_payload = {
@@ -282,6 +285,12 @@ class RuntimeHealthSession:
             "run_id": current_run_id(),
             "runtime_status": status,
             "runtime_score": runtime_score(findings),
+            "runtime_mode": policy["runtime_mode"],
+            "runtime_affects_exit_code": policy[
+                "runtime_affects_exit_code"
+            ],
+            "runtime_fail_on_failed": policy["fail_on_failed"],
+            "runtime_fail_on_warning": policy["fail_on_warning"],
             "primary_failure_reason": (
                 primary.reason_code if primary else None
             ),
@@ -305,6 +314,7 @@ class RuntimeHealthSession:
             ),
             "automation_errors": self.automation_errors,
             "findings": [finding.to_dict() for finding in findings],
+            **self.request_profile,
         }
 
         attempt_number = None
@@ -370,7 +380,6 @@ class RuntimeHealthSession:
             else final_runtime_status
         )
         overall_status = combine_statuses(visual_status, recovery_status)
-        policy = runtime_reporting_policy(self.config)
         self._summary = sanitize_payload({
             "schema_version": "1.1",
             "result_type": "page_summary",
@@ -412,6 +421,7 @@ class RuntimeHealthSession:
             "recovered_after_retry": recovered_after_retry,
             "retry_count": retry_count,
             "findings": attempt_payload["findings"],
+            **self.request_profile,
         })
         add_result(self._summary)
         self._finalized = True
