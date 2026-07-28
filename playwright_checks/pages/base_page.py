@@ -1,4 +1,9 @@
 from playwright_checks.core.config_loader import get_page_config, load_site_config, locator_map
+from playwright_checks.runtime.session import (
+    FailOpenRuntimeHealthSession,
+    RuntimeHealthSession,
+)
+from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.utils.waits import locate_element, open_page_with_retry, wait_for_page_load, wait_for_visible
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -25,14 +30,66 @@ class BasePage:
         self.url = self.config["url"]
         self.modules = locator_map(self.config.get("modules", {}))
         self.dom_presence = locator_map(self.config.get("dom_presence", {}))
+        try:
+            self.runtime = RuntimeHealthSession(
+                page=self.page,
+                site_config=self.site_config,
+                page_config=self.config,
+                page_name=self.page_name,
+            )
+        except Exception as error:
+            self.runtime = FailOpenRuntimeHealthSession(
+                page=self.page,
+                site_config=self.site_config,
+                page_name=self.page_name,
+                error=error,
+            )
+        self.runtime.start_before_navigation()
 
     def open(self):
-        open_page_with_retry(
-            self.page,
-            self.url,
-            self.wait_until_ready,
-            self.page_name,
-        )
+        try:
+            navigation_context = self.runtime.begin_navigation()
+        except Exception as runtime_error:
+            navigation_context = {
+                "attempt_offset": 0,
+                "navigation_sequence": 1,
+            }
+            print(
+                "Runtime navigation sequence degraded without changing "
+                f"navigation: {redact_text(str(runtime_error))}"
+            )
+        try:
+            result = open_page_with_retry(
+                self.page,
+                self.url,
+                self.wait_until_ready,
+                self.page_name,
+                on_navigation_attempt=self.runtime.record_navigation_attempt,
+                attempt_offset=navigation_context.get("attempt_offset", 0),
+                navigation_sequence=navigation_context.get(
+                    "navigation_sequence",
+                    1,
+                ),
+            )
+        except Exception as error:
+            try:
+                self.runtime.complete_navigation(error=error)
+            except Exception as runtime_error:
+                print(
+                    "Runtime navigation finalization degraded without "
+                    f"changing navigation: {type(runtime_error).__name__}: "
+                    f"{redact_text(str(runtime_error))}"
+                )
+            raise
+        try:
+            self.runtime.complete_navigation(result)
+        except Exception as runtime_error:
+            print(
+                "Runtime navigation finalization degraded without changing "
+                f"navigation: {type(runtime_error).__name__}: "
+                f"{redact_text(str(runtime_error))}"
+            )
+        return result
 
     def wait_until_ready(self, page=None):
         target = page or self.page

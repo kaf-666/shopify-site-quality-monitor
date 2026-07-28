@@ -7,9 +7,22 @@ from playwright.sync_api import Error as PlaywrightError
 
 from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.core.driver import close_browser, init_browser
-from playwright_checks.core.test_results import add_result, clear_results, write_results
-from playwright_checks.core.viewport import is_mobile_viewport
+from playwright_checks.core.test_results import (
+    add_result,
+    clear_results,
+    write_results,
+)
+from playwright_checks.core.viewport import (
+    get_current_viewport_name,
+    is_mobile_viewport,
+)
 from playwright_checks.pages.collection_page import CollectionPage
+from playwright_checks.runtime.evidence import redact_text
+from playwright_checks.runtime.session import (
+    collect_runtime_health_fail_open,
+    finalize_runtime_health_fail_open,
+    record_runtime_error_fail_open,
+)
 from playwright_checks.utils.capture import (
     capture_first_screen,
     capture_global_screenshot,
@@ -280,14 +293,29 @@ def run():
     ctx = PageCheckContext(PAGE, suite=SUITE)
     failures = []
     create_dirs(ctx.baseline_dir, ctx.current_dir, ctx.diff_dir)
-    playwright = browser = context = page = None
+    playwright = browser = context = page = page_model = None
 
     try:
         playwright, browser, context, page = init_browser(ctx.site_config)
         page_model = CollectionPage(page, site_config=ctx.site_config)
-        page_model.open()
-        time.sleep(2)
-        page_model.wait_until_ready()
+        try:
+            page_model.open()
+            time.sleep(2)
+            page_model.wait_until_ready()
+        except Exception as navigation_error:
+            record_runtime_error_fail_open(
+                page_model.runtime,
+                navigation_error,
+                "navigation/readiness",
+            )
+            if not page_model.runtime.page_available():
+                raise
+            failures.append(
+                "PLP navigation/readiness error: "
+                f"{redact_text(f'{type(navigation_error).__name__}: {navigation_error}')}"
+            )
+
+        collect_runtime_health_fail_open(page_model.runtime)
 
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
@@ -332,12 +360,29 @@ def run():
         failures.extend(process_results(hover_results, ctx.site, ctx.suite, ctx.page_name))
 
     except Exception as e:
-        error = f"Playwright runtime error: {type(e).__name__}: {e}"
+        if page_model is not None:
+            record_runtime_error_fail_open(
+                page_model.runtime,
+                e,
+                "visual/check execution",
+            )
+        error = redact_text(
+            f"Playwright runtime error: {type(e).__name__}: {e}"
+        )
         failures.append(f"PLP: {error}")
         add_result(
             build_result(ctx.site, ctx.suite, ctx.page_name, "runtime", "failed", None, error=error)
         )
     finally:
+        if page_model is not None:
+            failures.extend(
+                finalize_runtime_health_fail_open(
+                    page_model.runtime,
+                    ctx.site,
+                    ctx.page_name,
+                    get_current_viewport_name(),
+                )
+            )
         close_browser(playwright, browser, context)
 
     return failures

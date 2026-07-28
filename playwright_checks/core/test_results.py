@@ -22,6 +22,27 @@ def get_results():
     return list(_RESULTS)
 
 
+def get_page_visual_status(site, viewport, page):
+    statuses = [
+        result.get("status")
+        for result in _RESULTS
+        if result.get("site") == site
+        and result.get("viewport") == viewport
+        and result.get("page") == page
+        and result.get("result_type", "visual") == "visual"
+        and result.get("case") != "runtime"
+    ]
+    if not statuses:
+        return "not_run"
+    if "failed" in statuses:
+        return "failed"
+    if "warning" in statuses:
+        return "warning"
+    if statuses and all(status == "initialized" for status in statuses):
+        return "initialized"
+    return "passed"
+
+
 def drop_results(viewport=None, page=None):
     kept_results = []
 

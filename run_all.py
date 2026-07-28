@@ -124,10 +124,217 @@ def validate_module_selectors(errors, page_name, page_config):
         validate_selector(errors, f"pages.{page_name}.modules.{module_name}", selector)
 
 
-def validate_settings(errors):
+def validate_runtime_health(errors, path, value, warnings=None):
+    warnings = warnings if warnings is not None else []
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        errors.append(f"{path} must be a mapping")
+        return
+
+    known_keys = {
+        "enabled",
+        "reporting",
+        "retry_policy",
+        "max_events_per_category",
+        "http_error_status",
+        "blank_page_text_threshold",
+        "blank_page_node_threshold",
+        "loading_confirmation_ms",
+        "loading_selectors",
+        "loading_critical_selectors",
+        "critical_selectors",
+        "optional_selectors",
+        "first_party_patterns",
+        "third_party_patterns",
+        "network_noise",
+        "legitimate_empty_patterns",
+        "error_page_patterns",
+    }
+    for key in value:
+        if key not in known_keys:
+            warnings.append(f"{path}.{key} is not recognized and will be ignored")
+
+    boolean_keys = ("enabled",)
+    integer_keys = (
+        "max_events_per_category",
+        "http_error_status",
+        "blank_page_text_threshold",
+        "blank_page_node_threshold",
+    )
+    list_keys = (
+        "loading_selectors",
+        "loading_critical_selectors",
+        "first_party_patterns",
+        "third_party_patterns",
+        "legitimate_empty_patterns",
+    )
+
+    for key in boolean_keys:
+        if key in value and not isinstance(value[key], bool):
+            errors.append(f"{path}.{key} must be a boolean")
+    for key in integer_keys:
+        if key in value and (
+            not isinstance(value[key], int)
+            or isinstance(value[key], bool)
+            or value[key] < 0
+        ):
+            errors.append(f"{path}.{key} must be a non-negative integer")
+    for key in list_keys:
+        if key not in value:
+            continue
+        items = value[key]
+        if not isinstance(items, list) or not all(
+            isinstance(item, str) and item.strip()
+            for item in items
+        ):
+            errors.append(
+                f"{path}.{key} must be a list of non-empty strings"
+            )
+
+    if "loading_confirmation_ms" in value:
+        confirmation = value["loading_confirmation_ms"]
+        if (
+            not isinstance(confirmation, (int, float))
+            or isinstance(confirmation, bool)
+            or confirmation < 0
+        ):
+            errors.append(
+                f"{path}.loading_confirmation_ms must be a non-negative number"
+            )
+
+    reporting = value.get("reporting")
+    if reporting is not None:
+        if not isinstance(reporting, dict):
+            errors.append(f"{path}.reporting must be a mapping")
+        else:
+            reporting_keys = {
+                "report_only",
+                "affect_exit_code",
+                "fail_on_failed",
+                "fail_on_warning",
+            }
+            for key, item in reporting.items():
+                if key not in reporting_keys:
+                    warnings.append(
+                        f"{path}.reporting.{key} is not recognized and will be ignored"
+                    )
+                elif not isinstance(item, bool):
+                    errors.append(
+                        f"{path}.reporting.{key} must be a boolean"
+                    )
+
+    retry_policy = value.get("retry_policy")
+    if retry_policy is not None:
+        if not isinstance(retry_policy, dict):
+            errors.append(f"{path}.retry_policy must be a mapping")
+        else:
+            for key in retry_policy:
+                if key != "recovered_status":
+                    warnings.append(
+                        f"{path}.retry_policy.{key} is not recognized and will be ignored"
+                    )
+            recovered_status = retry_policy.get("recovered_status")
+            if recovered_status is not None and recovered_status not in (
+                "passed",
+                "warning",
+                "failed",
+            ):
+                errors.append(
+                    f"{path}.retry_policy.recovered_status must be one of "
+                    "passed, warning, failed"
+                )
+
+    network_noise = value.get("network_noise")
+    if network_noise is not None:
+        allowed_noise_keys = {
+            "ignore_third_party_aborted",
+            "ignore_image_aborted",
+            "ignore_favicon",
+        }
+        if not isinstance(network_noise, dict):
+            errors.append(f"{path}.network_noise must be a mapping")
+        else:
+            for key, item in network_noise.items():
+                if key not in allowed_noise_keys:
+                    warnings.append(
+                        f"{path}.network_noise.{key} is not recognized and will be ignored"
+                    )
+                elif not isinstance(item, bool):
+                    errors.append(
+                        f"{path}.network_noise.{key} must be a boolean"
+                    )
+
+    for selector_key in ("critical_selectors", "optional_selectors"):
+        if selector_key not in value:
+            continue
+        selectors = value[selector_key]
+        if not isinstance(selectors, list):
+            errors.append(f"{path}.{selector_key} must be a list")
+            continue
+        for index, item in enumerate(selectors):
+            item_path = f"{path}.{selector_key}[{index}]"
+            if isinstance(item, str):
+                if not item.strip():
+                    errors.append(f"{item_path} must not be empty")
+                continue
+            if not isinstance(item, dict):
+                errors.append(f"{item_path} must be a string or mapping")
+                continue
+            name = item.get("name")
+            selector = item.get("selector")
+            if not isinstance(name, str) or not name.strip():
+                errors.append(f"{item_path}.name must be a non-empty string")
+            if not (
+                isinstance(selector, str)
+                and selector.strip()
+                or is_selector(selector)
+            ):
+                errors.append(
+                    f"{item_path}.selector must be CSS text or a "
+                    "non-empty [method, selector] pair"
+                )
+            if "visible" in item and not isinstance(item["visible"], bool):
+                errors.append(f"{item_path}.visible must be a boolean")
+            allow_patterns = item.get("allow_text_patterns")
+            if allow_patterns is not None and (
+                not isinstance(allow_patterns, list)
+                or not all(
+                    isinstance(pattern, str) and pattern.strip()
+                    for pattern in allow_patterns
+                )
+            ):
+                errors.append(
+                    f"{item_path}.allow_text_patterns must be a list "
+                    "of non-empty strings"
+                )
+
+    patterns = value.get("error_page_patterns")
+    if patterns is not None:
+        if not isinstance(patterns, dict):
+            errors.append(f"{path}.error_page_patterns must be a mapping")
+        else:
+            for reason, items in patterns.items():
+                if not isinstance(items, list) or not all(
+                    isinstance(item, str) and item.strip()
+                    for item in items
+                ):
+                    errors.append(
+                        f"{path}.error_page_patterns.{reason} must be "
+                        "a list of non-empty strings"
+                    )
+
+
+def validate_settings(errors, warnings):
     from playwright_checks.core.config_loader import load_settings
 
     settings = load_settings()
+    validate_runtime_health(
+        errors,
+        "configs/settings.yaml runtime_health",
+        settings.get("runtime_health"),
+        warnings,
+    )
     viewports = settings.get("viewports")
     run_viewports = settings.get("run_viewports")
 
@@ -175,7 +382,7 @@ def validate_config(args):
     errors = []
     warnings = []
 
-    settings, run_viewports = validate_settings(errors)
+    settings, run_viewports = validate_settings(errors, warnings)
     site_name = selected_site_name(args, settings)
     path = site_config_path(site_name)
 
@@ -195,6 +402,13 @@ def validate_config(args):
     except Exception as exc:
         errors.append(f"failed to load site yaml: {type(exc).__name__}: {exc}")
         return finish_validation(errors, warnings)
+
+    validate_runtime_health(
+        errors,
+        "runtime_health",
+        site_config.get("runtime_health"),
+        warnings,
+    )
 
     pages = site_config.get("pages")
     if not isinstance(pages, dict):
@@ -228,6 +442,31 @@ def validate_config(args):
         if not is_valid_url(page_config.get("url")):
             errors.append(f"pages.{page_name}.url is missing or invalid")
         validate_module_selectors(errors, page_name, page_config)
+        raw_page_config = pages[page_name]
+        validate_runtime_health(
+            errors,
+            f"pages.{page_name}.runtime_health",
+            raw_page_config.get("runtime_health"),
+            warnings,
+        )
+        for viewport_name in ("desktop", "mobile"):
+            viewport_config = raw_page_config.get(viewport_name)
+            if viewport_config is None:
+                continue
+            if not isinstance(viewport_config, dict):
+                errors.append(
+                    f"pages.{page_name}.{viewport_name} must be a mapping"
+                )
+                continue
+            validate_runtime_health(
+                errors,
+                (
+                    f"pages.{page_name}.{viewport_name}."
+                    "runtime_health"
+                ),
+                viewport_config.get("runtime_health"),
+                warnings,
+            )
 
         if page_name == "collection":
             validate_selector(errors, "pages.collection.product_card", page_config.get("product_card"))
@@ -272,7 +511,8 @@ def finish_validation(errors, warnings):
     print("OK config validation passed")
     if warnings:
         print(
-            "Baseline warnings are non-blocking; create or review baselines before CI visual runs."
+            "Warnings are non-blocking; review configuration and baselines "
+            "before CI visual runs."
         )
     return 0
 

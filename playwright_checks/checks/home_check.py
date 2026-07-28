@@ -7,9 +7,19 @@ import numpy as np
 from PIL import Image
 
 from playwright_checks.core.driver import close_browser, init_browser
-from playwright_checks.core.test_results import add_result, clear_results, write_results
+from playwright_checks.core.test_results import (
+    add_result,
+    clear_results,
+    write_results,
+)
 from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.pages.home_page import HomePage
+from playwright_checks.runtime.evidence import redact_text
+from playwright_checks.runtime.session import (
+    collect_runtime_health_fail_open,
+    finalize_runtime_health_fail_open,
+    record_runtime_error_fail_open,
+)
 from playwright_checks.utils.capture import (
     capture_modules,
     capture_first_screen,
@@ -19,6 +29,7 @@ from playwright_checks.utils.capture import (
     wait_for_layout_stable,
 )
 from playwright_checks.core.paths import baseline_dir, legacy_baseline_dir
+from playwright_checks.core.viewport import get_current_viewport_name
 from playwright_checks.utils.dom import (
     dom_check,
     dom_presence_check,
@@ -408,14 +419,29 @@ def run():
     failures = []
     create_dirs(ctx.baseline_dir, ctx.current_dir, ctx.diff_dir)
 
-    playwright = browser = context = page = None
+    playwright = browser = context = page = page_model = None
 
     try:
         playwright, browser, context, page = init_browser(ctx.site_config)
         page_model = HomePage(page, site_config=ctx.site_config)
-        page_model.open()
-        time.sleep(2)
-        page_model.wait_until_ready()
+        try:
+            page_model.open()
+            time.sleep(2)
+            page_model.wait_until_ready()
+        except Exception as navigation_error:
+            record_runtime_error_fail_open(
+                page_model.runtime,
+                navigation_error,
+                "navigation/readiness",
+            )
+            if not page_model.runtime.page_available():
+                raise
+            failures.append(
+                "Home navigation/readiness error: "
+                f"{redact_text(f'{type(navigation_error).__name__}: {navigation_error}')}"
+            )
+
+        collect_runtime_health_fail_open(page_model.runtime)
 
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
@@ -477,12 +503,29 @@ def run():
         failures.extend(process_results(plugin_results, ctx.site, ctx.suite, ctx.page_name))
 
     except Exception as e:
-        error = f"Playwright runtime error: {type(e).__name__}: {e}"
+        if page_model is not None:
+            record_runtime_error_fail_open(
+                page_model.runtime,
+                e,
+                "visual/check execution",
+            )
+        error = redact_text(
+            f"Playwright runtime error: {type(e).__name__}: {e}"
+        )
         failures.append(f"Home: {error}")
         add_result(
             build_result(ctx.site, ctx.suite, ctx.page_name, "runtime", "failed", None, error=error)
         )
     finally:
+        if page_model is not None:
+            failures.extend(
+                finalize_runtime_health_fail_open(
+                    page_model.runtime,
+                    ctx.site,
+                    ctx.page_name,
+                    get_current_viewport_name(),
+                )
+            )
         close_browser(playwright, browser, context)
 
     return failures

@@ -34,6 +34,7 @@ def should_retry_page(failures):
         "capture failed",
         "DOM [",
         "runtime error",
+        "runtime health failed",
         "not found",
         "not ready",
     )

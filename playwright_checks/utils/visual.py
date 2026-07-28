@@ -75,14 +75,11 @@ def _baseline_init_blocked_by_ci():
 
 def _strict_warnings_enabled():
     env_value = _env_bool("VISUAL_STRICT_WARNINGS")
-    if env_value is True:
-        return True
+    if env_value is not None:
+        return env_value
 
     if is_ci_environment():
         return True
-
-    if env_value is False:
-        return False
 
     settings = load_settings()
     return bool(settings.get("ci", {}).get("strict_warnings", False))
@@ -397,6 +394,7 @@ def build_result(
     details=None
 ):
     result = {
+        "result_type": "visual",
         "site": site,
         "suite": suite,
         "run_id": current_run_id(),
@@ -404,6 +402,7 @@ def build_result(
         "page": page,
         "case": case,
         "status": status,
+        "visual_status": status,
         "ratio": ratio,
         "threshold": CHANGE_THRESHOLD,
         "warning_threshold": WARNING_THRESHOLD,

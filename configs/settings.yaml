@@ -53,3 +53,34 @@ visual:
   structural_tile_size_px: 128
   structural_hash_distance_threshold: 0.13
   structural_changed_tile_fraction_threshold: 0.15
+runtime_health:
+  enabled: true
+  reporting:
+    report_only: true
+    affect_exit_code: false
+    fail_on_failed: true
+    fail_on_warning: false
+  retry_policy:
+    recovered_status: warning
+  max_events_per_category: 100
+  http_error_status: 400
+  blank_page_text_threshold: 30
+  blank_page_node_threshold: 20
+  loading_confirmation_ms: 1000
+  loading_selectors:
+    - "[aria-busy='true']"
+  loading_critical_selectors: []
+  critical_selectors: []
+  optional_selectors: []
+  first_party_patterns: []
+  third_party_patterns: []
+  network_noise:
+    ignore_third_party_aborted: true
+    ignore_image_aborted: true
+    ignore_favicon: true
+  legitimate_empty_patterns:
+    - "no products found"
+    - "no results"
+    - "sold out"
+    - "your cart is empty"
+  error_page_patterns: {}

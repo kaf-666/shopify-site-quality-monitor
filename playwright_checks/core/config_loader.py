@@ -75,6 +75,43 @@ DEFAULT_DYNAMIC_HIDE = {
     "text_max_length": 80,
     "container_selector": "[id*='cbb'], [class*='cbb'], section, form, div",
 }
+DEFAULT_RUNTIME_HEALTH = {
+    "enabled": True,
+    "reporting": {
+        "report_only": True,
+        "affect_exit_code": False,
+        "fail_on_failed": True,
+        "fail_on_warning": False,
+    },
+    "retry_policy": {
+        "recovered_status": "warning",
+    },
+    "max_events_per_category": 100,
+    "http_error_status": 400,
+    "blank_page_text_threshold": 30,
+    "blank_page_node_threshold": 20,
+    "loading_confirmation_ms": 1000,
+    "loading_selectors": [
+        "[aria-busy='true']",
+    ],
+    "loading_critical_selectors": [],
+    "critical_selectors": [],
+    "optional_selectors": [],
+    "first_party_patterns": [],
+    "third_party_patterns": [],
+    "network_noise": {
+        "ignore_third_party_aborted": True,
+        "ignore_image_aborted": True,
+        "ignore_favicon": True,
+    },
+    "legitimate_empty_patterns": [
+        "no products found",
+        "no results",
+        "sold out",
+        "your cart is empty",
+    ],
+    "error_page_patterns": {},
+}
 
 # Review widgets are third-party, asynchronous content rather than a visual
 # regression target. Keep them out of captures even for pages that replace the
@@ -319,6 +356,66 @@ def get_dynamic_hide_config(site_config=None, page_config=None):
             if str(value).lower() not in excluded_selectors
         ]
 
+    return merged
+
+
+def get_runtime_health_config(site_config=None, page_config=None):
+    config = (
+        site_config
+        if isinstance(site_config, dict)
+        else load_site_config(site_config)
+    )
+    settings = load_settings()
+    merged = _deep_merge(
+        DEFAULT_RUNTIME_HEALTH,
+        settings.get("runtime_health", {}),
+    )
+    merged = _deep_merge(merged, config.get("runtime_health", {}))
+    if page_config:
+        merged = _deep_merge(
+            merged,
+            page_config.get("runtime_health", {}),
+        )
+    return _apply_runtime_health_env_overrides(merged)
+
+
+def _optional_env_bool(name):
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    return None
+
+
+def _apply_runtime_health_env_overrides(config):
+    merged = copy.deepcopy(config)
+    enabled = _optional_env_bool("RUNTIME_HEALTH_ENABLED")
+    if enabled is not None:
+        merged["enabled"] = enabled
+
+    reporting = merged.setdefault("reporting", {})
+    reporting_env = {
+        "report_only": "RUNTIME_HEALTH_REPORT_ONLY",
+        "affect_exit_code": "RUNTIME_HEALTH_AFFECT_EXIT_CODE",
+        "fail_on_failed": "RUNTIME_HEALTH_FAIL_ON_FAILED",
+        "fail_on_warning": "RUNTIME_HEALTH_FAIL_ON_WARNING",
+    }
+    for key, env_name in reporting_env.items():
+        value = _optional_env_bool(env_name)
+        if value is not None:
+            reporting[key] = value
+
+    recovered_status = os.environ.get("RUNTIME_HEALTH_RECOVERED_STATUS")
+    if recovered_status:
+        normalized = recovered_status.strip().lower()
+        if normalized in ("passed", "warning", "failed"):
+            merged.setdefault("retry_policy", {})[
+                "recovered_status"
+            ] = normalized
     return merged
 
 

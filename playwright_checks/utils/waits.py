@@ -76,7 +76,10 @@ def wait_for_page_load(page, timeout=15000, label="page"):
         return True
     except PlaywrightTimeoutError:
         state = page.evaluate("document.readyState").strip()
-        print(f"{label} readyState wait skipped, state={state}, url={page.url}")
+        print(
+            f"{label} readyState wait skipped, state={state}, "
+            f"url={_redact_runtime_error(page.url)}"
+        )
         return False
 
 
@@ -101,8 +104,10 @@ def assert_page_not_blocked(page, timeout=20):
             for pattern in patterns:
                 if pattern.lower() in haystack:
                     raise AccessBlockedError(
-                        f"Access blocked by verification page: {pattern!r}, "
-                        f"url={page.url}, title={title!r}"
+                        _redact_runtime_error(
+                            "Access blocked by verification page: "
+                            f"{pattern!r}, url={page.url}, title={title!r}"
+                        )
                     )
 
             if body_text.strip():
@@ -112,28 +117,157 @@ def assert_page_not_blocked(page, timeout=20):
 
     if transient_seen:
         raise AccessBlockedError(
-            f"Verification page did not finish: {transient_seen!r}, "
-            f"url={page.url}, title={page.title()!r}"
+            _redact_runtime_error(
+                "Verification page did not finish: "
+                f"{transient_seen!r}, url={page.url}, "
+                f"title={page.title()!r}"
+            )
         )
 
 
-def open_page_with_retry(page, url, wait_until_ready, label="page", attempts=3, delay=2):
-    for attempt in range(1, attempts + 1):
+def open_page_with_retry(
+    page,
+    url,
+    wait_until_ready,
+    label="page",
+    attempts=3,
+    delay=2,
+    on_navigation_attempt=None,
+    attempt_offset=0,
+    navigation_sequence=1,
+):
+    navigation_attempts = []
+    for sequence_attempt in range(1, attempts + 1):
+        attempt = attempt_offset + sequence_attempt
+        response = None
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            response = page.goto(
+                url,
+                wait_until="domcontentloaded",
+                timeout=45000,
+            )
             assert_page_not_blocked(page)
             wait_until_ready(page)
             time.sleep(1)
             assert_page_not_blocked(page)
             wait_until_ready(page)
-            return
-        except AccessBlockedError:
+            final_url = page.url
+            status = response.status if response else None
+            attempt_result = {
+                "attempt": attempt,
+                "navigation_sequence": navigation_sequence,
+                "sequence_attempt": sequence_attempt,
+                "requested_url": url,
+                "state": "succeeded",
+                "final_url": final_url,
+                "status": status,
+                "redirected": final_url.rstrip("/") != url.rstrip("/"),
+                "timestamp": time.time(),
+            }
+            navigation_attempts.append(attempt_result)
+            if on_navigation_attempt:
+                _safe_navigation_callback(
+                    on_navigation_attempt,
+                    attempt_result,
+                )
+            return {
+                "requested_url": url,
+                "final_url": final_url,
+                "status": status,
+                "main_document_status": status,
+                "redirected": attempt_result["redirected"],
+                "navigation_attempts": navigation_attempts,
+                "navigation_error": None,
+            }
+        except AccessBlockedError as error:
+            navigation_attempts.append(
+                _report_navigation_attempt(
+                    on_navigation_attempt,
+                    attempt,
+                    navigation_sequence,
+                    sequence_attempt,
+                    url,
+                    page,
+                    response,
+                    error,
+                )
+            )
             raise
-        except Exception:
-            if attempt == attempts:
+        except Exception as error:
+            navigation_attempts.append(
+                _report_navigation_attempt(
+                    on_navigation_attempt,
+                    attempt,
+                    navigation_sequence,
+                    sequence_attempt,
+                    url,
+                    page,
+                    response,
+                    error,
+                )
+            )
+            if sequence_attempt == attempts:
                 raise
-            print(f"{label} page not ready, retry {attempt}/{attempts}")
+            print(
+                f"{label} page not ready, retry "
+                f"{sequence_attempt}/{attempts}"
+            )
             time.sleep(delay)
+
+
+def _report_navigation_attempt(
+    callback,
+    attempt,
+    navigation_sequence,
+    sequence_attempt,
+    requested_url,
+    page,
+    response,
+    error,
+):
+    try:
+        final_url = page.url
+    except Exception:
+        final_url = None
+    attempt_result = {
+        "attempt": attempt,
+        "navigation_sequence": navigation_sequence,
+        "sequence_attempt": sequence_attempt,
+        "requested_url": requested_url,
+        "state": "failed",
+        "final_url": final_url,
+        "status": response.status if response else None,
+        "redirected": bool(
+            final_url
+            and final_url.rstrip("/") != requested_url.rstrip("/")
+        ),
+        "error_type": type(error).__name__,
+        "error_message": _redact_runtime_error(error),
+        "timestamp": time.time(),
+    }
+    if callback:
+        _safe_navigation_callback(
+            callback,
+            attempt_result,
+        )
+    return attempt_result
+
+
+def _safe_navigation_callback(callback, attempt_result):
+    try:
+        callback(attempt_result)
+    except Exception as error:
+        print(
+            "Runtime navigation observer degraded without changing "
+            f"navigation: {type(error).__name__}: "
+            f"{_redact_runtime_error(error)}"
+        )
+
+
+def _redact_runtime_error(error):
+    from playwright_checks.runtime.evidence import redact_text
+
+    return redact_text(str(error))
 
 
 def create_dirs(*dirs):
