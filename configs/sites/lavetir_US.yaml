@@ -48,6 +48,10 @@ screenshot_css:
         display: flex !important;
       }
     }
+    /* Delivery estimates are recalculated on every visit. */
+    .deliverynew {
+      visibility: hidden !important;
+    }
 
 dynamic_hide:
   exclude_selectors:
@@ -172,6 +176,15 @@ pages:
     url: https://www.lavetir.com/collections/mother-of-the-bride-dresses/products/lace-chiffon-square-neck-3-4-sleeves-3-pieces-pantsuits-with-appliques-jacket-22441666
     capture_global_screenshot: true
     capture_first_screen: true
+    # Shopify recommendations are populated asynchronously and can be empty or
+    # contain a different product set between otherwise identical captures.
+    dynamic_hide:
+      selectors:
+        - ".product-recommendations"
+        - "[id*='recommend']"
+        - "[class*='recommend']"
+        - "[id*='related']"
+        - "[class*='related-products']"
     expected_keywords:
       - lace
       - chiffon
@@ -203,9 +216,5 @@ pages:
         - |
           .breadcrumbs__wrapper {
             padding-block: 10.4px !important;
-          }
-          /* Delivery estimates are recalculated on every visit. */
-          .deliverynew {
-            visibility: hidden !important;
           }
       reload_before_module_capture: true

@@ -1,4 +1,4 @@
-# Visual Regression Test Standard
+# Shopify Site Quality Monitor
 
 This project is a Playwright-based visual regression test scaffold for Shopify sites.
 

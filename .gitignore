@@ -1,7 +1,55 @@
+# Environment variables and secrets
+.env
+.env.*
+cookies.txt
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+.secrets/
+secrets/
+
+# Python
 .venv/
-.idea/
-__pycache__/
+venv/
+**/__pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node.js
+node_modules/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+
+# Logs, caches, and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+.cache/
+tmp/
+temp/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Project-generated outputs
 reports/
 artifacts/
 driver/*.exe
