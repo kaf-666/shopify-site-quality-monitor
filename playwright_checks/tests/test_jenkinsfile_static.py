@@ -96,6 +96,16 @@ class JenkinsfileStaticTests(unittest.TestCase):
         for command in forbidden_dump_commands:
             self.assertNotIn(command, self.content)
 
+    def test_dynamic_environment_access_is_forbidden(self):
+        self.assertNotIn("env[", self.content)
+        self.assertNotIn("env.getAt(", self.content)
+        for name in (
+            "MONDRESSY_US_SHOPIFY_SIGNATURE",
+            "MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT",
+            "MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT",
+        ):
+            self.assertIn(f"env.{name}?.trim()", self.content)
+
 
 if __name__ == "__main__":
     unittest.main()

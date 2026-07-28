@@ -55,15 +55,25 @@ pipeline {
                             variable: 'MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT'
                         )
                     ]) {
-                        def required = [
-                            'MONDRESSY_US_SHOPIFY_SIGNATURE',
-                            'MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT',
-                            'MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT'
-                        ]
-                        def missing = required.findAll {
-                            !env[it]?.trim()
+                        def missing = []
+
+                        if (!env.MONDRESSY_US_SHOPIFY_SIGNATURE?.trim()) {
+                            missing.add('MONDRESSY_US_SHOPIFY_SIGNATURE')
                         }
-                        if (missing) {
+
+                        if (!env.MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT?.trim()) {
+                            missing.add(
+                                'MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT'
+                            )
+                        }
+
+                        if (!env.MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT?.trim()) {
+                            missing.add(
+                                'MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT'
+                            )
+                        }
+
+                        if (!missing.isEmpty()) {
                             error(
                                 'Missing required environment variables: ' +
                                 missing.join(', ')
