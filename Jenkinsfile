@@ -196,7 +196,7 @@ pipeline {
                         )
                         def capturedCode =
                             env.GRAY_PYTHON_EXIT_CODE?.trim()
-                        if (!(capturedCode ==~ /^\d+$/)) {
+                        if (!(capturedCode ==~ /^[0-9]+$/)) {
                             error(
                                 'Pipeline state error: invalid ' +
                                 'GRAY_PYTHON_EXIT_CODE=' +
@@ -243,17 +243,18 @@ pipeline {
                         """
                     }
 
+                    def capturedCode = ''
                     if (fileExists(exitCodeFile)) {
-                        def capturedCode = readFile(
+                        capturedCode = readFile(
                             file: exitCodeFile
                         ).trim()
-                        if (capturedCode ==~ /^\d+$/) {
+                        if (capturedCode ==~ /^[0-9]+$/) {
                             env.GRAY_SUMMARY_EXIT_CODE = capturedCode
                         } else {
                             env.GRAY_SUMMARY_EXIT_CODE = '98'
                             echo(
                                 'Invalid summary exit-code file content: ' +
-                                capturedCode
+                                "'${capturedCode}'"
                             )
                         }
                     } else {
@@ -262,6 +263,11 @@ pipeline {
                             'Summary exit-code file was not created.'
                         )
                     }
+                    echo(
+                        "Raw summary exit-code file content=" +
+                        "'${capturedCode}' length=" +
+                        capturedCode.length()
+                    )
                     echo(
                         'Captured GRAY_SUMMARY_EXIT_CODE=' +
                         env.GRAY_SUMMARY_EXIT_CODE
@@ -360,7 +366,7 @@ pipeline {
         stage('Evaluate Result') {
             steps {
                 script {
-                    if (!(env.GRAY_PYTHON_EXIT_CODE ==~ /^\d+$/)) {
+                    if (!(env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/)) {
                         error(
                             'Pipeline state error: invalid ' +
                             'GRAY_PYTHON_EXIT_CODE=' +
@@ -375,7 +381,7 @@ pipeline {
                     }
                     def summaryCode =
                         env.GRAY_SUMMARY_EXIT_CODE?.trim()
-                    if (!(summaryCode ==~ /^\d+$/)) {
+                    if (!(summaryCode ==~ /^[0-9]+$/)) {
                         error(
                             'Pipeline state error: invalid ' +
                             'GRAY_SUMMARY_EXIT_CODE=' +

@@ -186,7 +186,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             run_stage,
         )
         self.assertIn(
-            "capturedCode ==~ /^\\d+$/",
+            "capturedCode ==~ /^[0-9]+$/",
             run_stage,
         )
         self.assertIn(
@@ -274,9 +274,19 @@ class JenkinsfileStaticTests(unittest.TestCase):
             summary_stage,
         )
         self.assertIn(
-            "capturedCode ==~ /^\\d+$/",
+            "def capturedCode = ''",
             summary_stage,
         )
+        self.assertIn(
+            "capturedCode ==~ /^[0-9]+$/",
+            summary_stage,
+        )
+        self.assertIn(
+            "Raw summary exit-code file content=",
+            summary_stage,
+        )
+        self.assertIn("capturedCode.length()", summary_stage)
+        self.assertNotIn("/^\\d+$/", self.content)
         self.assertIn(
             "Invalid summary exit-code file content: ",
             summary_stage,
@@ -324,7 +334,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             evaluate_stage,
         )
         self.assertIn(
-            "summaryCode ==~ /^\\d+$/",
+            "summaryCode ==~ /^[0-9]+$/",
             evaluate_stage,
         )
         self.assertIn(
@@ -350,7 +360,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
 
         def expected_evaluate_action(value):
             captured = (value or "").strip()
-            if not re.fullmatch(r"\d+", captured):
+            if not re.fullmatch(r"[0-9]+", captured):
                 return "pipeline_state_error"
             if captured != "0":
                 return f"summary_error:{captured}"
@@ -369,6 +379,28 @@ class JenkinsfileStaticTests(unittest.TestCase):
                 self.assertEqual(
                     expected,
                     expected_evaluate_action(value),
+                )
+
+    def test_summary_exit_code_file_content_matrix(self):
+        def captured_env_value(file_content):
+            captured = (file_content or "").strip()
+            if re.fullmatch(r"[0-9]+", captured):
+                return captured
+            return "98"
+
+        cases = (
+            ("0", "0"),
+            ("1", "1"),
+            ("2", "2"),
+            ("0\n", "0"),
+            ("", "98"),
+            ("not_run", "98"),
+        )
+        for file_content, expected in cases:
+            with self.subTest(file_content=repr(file_content)):
+                self.assertEqual(
+                    expected,
+                    captured_env_value(file_content),
                 )
 
     def test_monitor_command_is_inside_with_credentials(self):
