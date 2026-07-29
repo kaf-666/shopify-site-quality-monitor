@@ -26,7 +26,6 @@ pipeline {
         ALLOW_BASELINE_INIT = 'false'
         FORCE_BASELINE_INIT = 'false'
         ALLOW_SIDE_EFFECT_FLOW = 'false'
-        GRAY_SUMMARY_EXIT_CODE = 'not_run'
     }
 
     stages {
@@ -243,34 +242,36 @@ pipeline {
                         """
                     }
 
-                    def capturedCode = ''
-                    if (fileExists(exitCodeFile)) {
-                        capturedCode = readFile(
-                            file: exitCodeFile
-                        ).trim()
-                        if (capturedCode ==~ /^[0-9]+$/) {
-                            env.GRAY_SUMMARY_EXIT_CODE = capturedCode
-                        } else {
-                            env.GRAY_SUMMARY_EXIT_CODE = '98'
-                            echo(
-                                'Invalid summary exit-code file content: ' +
-                                "'${capturedCode}'"
-                            )
+                    def rawSummaryCode = (
+                        fileExists(exitCodeFile)
+                        ? readFile(file: exitCodeFile).trim()
+                        : ''
+                    )
+                    int normalizedSummaryCode
+                    try {
+                        normalizedSummaryCode =
+                            Integer.parseInt(rawSummaryCode)
+                        if (
+                            normalizedSummaryCode < 0
+                            || normalizedSummaryCode > 255
+                        ) {
+                            normalizedSummaryCode = 98
                         }
-                    } else {
-                        env.GRAY_SUMMARY_EXIT_CODE = '98'
-                        echo(
-                            'Summary exit-code file was not created.'
-                        )
+                    } catch (Exception ignored) {
+                        normalizedSummaryCode = 98
                     }
                     echo(
                         "Raw summary exit-code file content=" +
-                        "'${capturedCode}' length=" +
-                        capturedCode.length()
+                        "'${rawSummaryCode}' length=" +
+                        rawSummaryCode.length()
+                    )
+                    writeFile(
+                        file: exitCodeFile,
+                        text: normalizedSummaryCode.toString()
                     )
                     echo(
                         'Captured GRAY_SUMMARY_EXIT_CODE=' +
-                        env.GRAY_SUMMARY_EXIT_CODE
+                        normalizedSummaryCode.toString()
                     )
                 }
             }
@@ -336,29 +337,6 @@ pipeline {
                             'status; result evaluation will continue.'
                         )
                     }
-
-                    def exitCodeFile = '.gray_summary_exit_code'
-                    int exitCodeFileCleanupCode
-                    if (isUnix()) {
-                        exitCodeFileCleanupCode = sh(
-                            script: "rm -f -- '${exitCodeFile}'",
-                            returnStatus: true
-                        )
-                    } else {
-                        exitCodeFileCleanupCode = bat(
-                            script: """
-                                @if not exist "${exitCodeFile}" exit /b 0
-                                @del /q "${exitCodeFile}"
-                            """,
-                            returnStatus: true
-                        )
-                    }
-                    if (exitCodeFileCleanupCode != 0) {
-                        echo(
-                            'Warning: failed to remove summary exit-code ' +
-                            'file; result evaluation will continue.'
-                        )
-                    }
                 }
             }
         }
@@ -379,19 +357,35 @@ pipeline {
                             env.GRAY_PYTHON_EXIT_CODE
                         )
                     }
-                    def summaryCode =
-                        env.GRAY_SUMMARY_EXIT_CODE?.trim()
-                    if (!(summaryCode ==~ /^[0-9]+$/)) {
-                        error(
-                            'Pipeline state error: invalid ' +
-                            'GRAY_SUMMARY_EXIT_CODE=' +
-                            "${summaryCode}"
-                        )
+                    def summaryExitFile = '.gray_summary_exit_code'
+                    int summaryExitCode = 98
+                    if (fileExists(summaryExitFile)) {
+                        def rawSummaryCode = readFile(
+                            file: summaryExitFile
+                        ).trim()
+                        try {
+                            summaryExitCode =
+                                Integer.parseInt(rawSummaryCode)
+                            if (
+                                summaryExitCode < 0
+                                || summaryExitCode > 255
+                            ) {
+                                summaryExitCode = 98
+                            }
+                        } catch (Exception ignored) {
+                            summaryExitCode = 98
+                        }
+                    } else {
+                        echo 'Summary exit-code file is missing.'
                     }
-                    if (summaryCode != '0') {
+                    echo(
+                        'Evaluate GRAY_SUMMARY_EXIT_CODE=' +
+                        summaryExitCode
+                    )
+                    if (summaryExitCode != 0) {
                         error(
                             'Runtime gray summary validation failed ' +
-                            "(exit code=${summaryCode})."
+                            "(exit code=${summaryExitCode})."
                         )
                     }
                     echo 'Mondressy US Runtime gray validation passed.'
@@ -401,6 +395,33 @@ pipeline {
     }
 
     post {
+        always {
+            script {
+                int exitCodeFileCleanupCode
+                if (isUnix()) {
+                    exitCodeFileCleanupCode = sh(
+                        script: 'rm -f -- .gray_summary_exit_code',
+                        returnStatus: true
+                    )
+                } else {
+                    exitCodeFileCleanupCode = bat(
+                        script: '''
+                            @if exist .gray_summary_exit_code (
+                                del /f /q .gray_summary_exit_code
+                            )
+                            @exit /b 0
+                        ''',
+                        returnStatus: true
+                    )
+                }
+                if (exitCodeFileCleanupCode != 0) {
+                    echo(
+                        'Warning: failed to remove summary exit-code file.'
+                    )
+                }
+            }
+        }
+
         success {
             echo 'Mondressy US Runtime gray validation succeeded.'
         }

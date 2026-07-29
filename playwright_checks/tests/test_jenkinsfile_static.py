@@ -244,57 +244,45 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertIn("exit /b 0", summary_stage)
         self.assertIn("fileExists(exitCodeFile)", summary_stage)
         self.assertIn("readFile(", summary_stage)
+        self.assertIn("writeFile(", summary_stage)
+        self.assertIn(
+            "Integer.parseInt(rawSummaryCode)",
+            summary_stage,
+        )
+        self.assertIn("normalizedSummaryCode < 0", summary_stage)
+        self.assertIn("normalizedSummaryCode > 255", summary_stage)
+        self.assertIn("normalizedSummaryCode = 98", summary_stage)
         self.assertNotIn("returnStatus: true", summary_stage)
         self.assertNotIn("error(", summary_stage)
-        self.assertNotIn("int summaryExitCode", self.content)
-        self.assertNotIn("def summaryExitCode", self.content)
-        self.assertNotIn("String.valueOf(summaryExitCode)", self.content)
-        self.assertNotRegex(
+        self.assertNotIn("int summaryExitCode", summary_stage)
+        self.assertNotIn("def summaryExitCode", summary_stage)
+        self.assertNotIn(
+            "String.valueOf(summaryExitCode)",
             summary_stage,
-            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*(?:sh|bat)\(",
         )
-        self.assertEqual(
-            1,
-            self.content.count(
-                "GRAY_SUMMARY_EXIT_CODE = 'not_run'"
-            ),
+        self.assertNotIn(
+            "GRAY_SUMMARY_EXIT_CODE = 'not_run'",
+            self.content,
         )
-        self.assertEqual(
-            2,
-            summary_stage.count(
-                "env.GRAY_SUMMARY_EXIT_CODE = '98'"
-            ),
-        )
+        self.assertNotIn("env.GRAY_SUMMARY_EXIT_CODE", self.content)
         self.assertIn(
             "Captured GRAY_SUMMARY_EXIT_CODE=",
             summary_stage,
         )
         self.assertIn(
-            "env.GRAY_SUMMARY_EXIT_CODE = capturedCode",
+            "text: normalizedSummaryCode.toString()",
             summary_stage,
         )
         self.assertIn(
-            "def capturedCode = ''",
-            summary_stage,
-        )
-        self.assertIn(
-            "capturedCode ==~ /^[0-9]+$/",
+            "normalizedSummaryCode.toString()",
             summary_stage,
         )
         self.assertIn(
             "Raw summary exit-code file content=",
             summary_stage,
         )
-        self.assertIn("capturedCode.length()", summary_stage)
+        self.assertIn("rawSummaryCode.length()", summary_stage)
         self.assertNotIn("/^\\d+$/", self.content)
-        self.assertIn(
-            "Invalid summary exit-code file content: ",
-            summary_stage,
-        )
-        self.assertIn(
-            "Summary exit-code file was not created.",
-            summary_stage,
-        )
         self.assertNotRegex(
             after_summary,
             r"env\.GRAY_SUMMARY_EXIT_CODE\s*=(?!=|~)",
@@ -306,20 +294,29 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertLess(summary_index, archive_index)
         self.assertLess(archive_index, evaluate_index)
 
-    def test_summary_exit_code_file_is_cleaned_before_evaluate(self):
+    def test_summary_exit_code_file_is_preserved_until_post_always(self):
         cleanup_index = self.content.index(
             "stage('Clean Current Run Temporary Artifacts')"
         )
         evaluate_index = self.content.index("stage('Evaluate Result')")
         cleanup_stage = self.content[cleanup_index:evaluate_index]
+        post_index = self.content.index("    post {")
+        post_block = self.content[post_index:]
 
-        self.assertIn(".gray_summary_exit_code", cleanup_stage)
-        self.assertIn("rm -f --", cleanup_stage)
-        self.assertIn("@del /q", cleanup_stage)
-        self.assertIn("returnStatus: true", cleanup_stage)
+        self.assertNotIn(".gray_summary_exit_code", cleanup_stage)
+        self.assertIn("always {", post_block)
+        self.assertIn(
+            "rm -f -- .gray_summary_exit_code",
+            post_block,
+        )
+        self.assertIn(
+            "del /f /q .gray_summary_exit_code",
+            post_block,
+        )
+        self.assertIn("returnStatus: true", post_block)
         self.assertIn(
             "Warning: failed to remove summary exit-code ",
-            cleanup_stage,
+            post_block,
         )
         self.assertNotIn("error(", cleanup_stage)
         self.assertLess(cleanup_index, evaluate_index)
@@ -330,63 +327,83 @@ class JenkinsfileStaticTests(unittest.TestCase):
         evaluate_stage = self.content[evaluate_index:post_index]
 
         self.assertIn(
-            "def summaryCode =",
+            "def summaryExitFile = '.gray_summary_exit_code'",
             evaluate_stage,
         )
         self.assertIn(
-            "summaryCode ==~ /^[0-9]+$/",
+            "int summaryExitCode = 98",
             evaluate_stage,
         )
         self.assertIn(
-            "summaryCode != '0'",
+            "fileExists(summaryExitFile)",
             evaluate_stage,
         )
         self.assertIn(
-            "Pipeline state error: invalid ",
+            "file: summaryExitFile",
             evaluate_stage,
         )
+        self.assertIn(
+            "Integer.parseInt(rawSummaryCode)",
+            evaluate_stage,
+        )
+        self.assertIn("summaryExitCode < 0", evaluate_stage)
+        self.assertIn("summaryExitCode > 255", evaluate_stage)
+        self.assertIn(
+            "Summary exit-code file is missing.",
+            evaluate_stage,
+        )
+        self.assertIn(
+            "Evaluate GRAY_SUMMARY_EXIT_CODE=",
+            evaluate_stage,
+        )
+        self.assertIn("summaryExitCode != 0", evaluate_stage)
         self.assertIn(
             "Runtime gray summary validation failed ",
             evaluate_stage,
         )
-        self.assertNotIn(
-            "env.GRAY_SUMMARY_EXIT_CODE =",
-            evaluate_stage,
-        )
-        self.assertEqual(
-            evaluate_stage.count("if ("),
-            evaluate_stage.count("error("),
-        )
+        self.assertNotIn("env.GRAY_SUMMARY_EXIT_CODE", evaluate_stage)
+        self.assertEqual(3, evaluate_stage.count("error("))
 
-        def expected_evaluate_action(value):
-            captured = (value or "").strip()
-            if not re.fullmatch(r"[0-9]+", captured):
-                return "pipeline_state_error"
-            if captured != "0":
-                return f"summary_error:{captured}"
+        def expected_evaluate_action(file_content, exists=True):
+            summary_code = 98
+            if exists:
+                try:
+                    summary_code = int((file_content or "").strip())
+                    if summary_code < 0 or summary_code > 255:
+                        summary_code = 98
+                except (TypeError, ValueError):
+                    summary_code = 98
+            if summary_code != 0:
+                return f"summary_error:{summary_code}"
             return "success"
 
         cases = (
-            ("0", "success"),
-            ("1", "summary_error:1"),
-            ("2", "summary_error:2"),
-            ("98", "summary_error:98"),
-            ("not_run", "pipeline_state_error"),
-            ("", "pipeline_state_error"),
+            (True, "0", "success"),
+            (True, "1", "summary_error:1"),
+            (True, "2", "summary_error:2"),
+            (True, "", "summary_error:98"),
+            (True, "not_run", "summary_error:98"),
+            (False, None, "summary_error:98"),
         )
-        for value, expected in cases:
-            with self.subTest(summary_exit_code=value):
+        for exists, file_content, expected in cases:
+            with self.subTest(
+                exists=exists,
+                file_content=file_content,
+            ):
                 self.assertEqual(
                     expected,
-                    expected_evaluate_action(value),
+                    expected_evaluate_action(file_content, exists),
                 )
 
     def test_summary_exit_code_file_content_matrix(self):
-        def captured_env_value(file_content):
-            captured = (file_content or "").strip()
-            if re.fullmatch(r"[0-9]+", captured):
-                return captured
-            return "98"
+        def normalized_file_value(file_content):
+            try:
+                normalized = int((file_content or "").strip())
+                if normalized < 0 or normalized > 255:
+                    normalized = 98
+            except (TypeError, ValueError):
+                normalized = 98
+            return str(normalized)
 
         cases = (
             ("0", "0"),
@@ -400,7 +417,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             with self.subTest(file_content=repr(file_content)):
                 self.assertEqual(
                     expected,
-                    captured_env_value(file_content),
+                    normalized_file_value(file_content),
                 )
 
     def test_monitor_command_is_inside_with_credentials(self):
