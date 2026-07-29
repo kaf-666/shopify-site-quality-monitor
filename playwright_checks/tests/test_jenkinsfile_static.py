@@ -1,3 +1,4 @@
+import re
 import unittest
 from pathlib import Path
 
@@ -130,48 +131,78 @@ class JenkinsfileStaticTests(unittest.TestCase):
             self.content,
         )
 
-    def test_python_exit_code_is_converted_without_env_shadowing(self):
-        self.assertEqual(1, self.content.count("int pythonExitCode"))
+    def test_python_exit_code_is_assigned_directly_to_env(self):
+        run_index = self.content.index(
+            "stage('Run Mondressy US Runtime Gray Validation')"
+        )
+        summary_index = self.content.index(
+            "stage('Print Runtime Summary')"
+        )
+        run_stage = self.content[run_index:summary_index]
+        summary_stage = self.content[
+            summary_index:self.content.index("stage('Archive Artifacts')")
+        ]
+
+        unix_direct_assignment = re.search(
+            r"env\.GRAY_PYTHON_EXIT_CODE\s*=\s*sh\("
+            r".*?returnStatus:\s*true\s*"
+            r"\)\.toString\(\)",
+            run_stage,
+            re.DOTALL,
+        )
+        windows_direct_assignment = re.search(
+            r"env\.GRAY_PYTHON_EXIT_CODE\s*=\s*bat\("
+            r".*?returnStatus:\s*true\s*"
+            r"\)\.toString\(\)",
+            run_stage,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(unix_direct_assignment)
+        self.assertIsNotNone(windows_direct_assignment)
         self.assertNotIn("def pythonExitCode", self.content)
-        self.assertEqual(1, self.content.count("pythonExitCode = sh("))
-        self.assertEqual(1, self.content.count("pythonExitCode = bat("))
-        self.assertIn(
-            "String.valueOf(pythonExitCode)",
+        self.assertNotIn("int pythonExitCode", self.content)
+        self.assertNotIn("String.valueOf(pythonExitCode)", self.content)
+        self.assertNotIn(
+            "GRAY_PYTHON_EXIT_CODE = 'not_run'",
             self.content,
+        )
+        self.assertEqual(
+            2,
+            len(
+                re.findall(
+                    r"env\.GRAY_PYTHON_EXIT_CODE\s*=\s*(?:sh|bat)\(",
+                    self.content,
+                )
+            ),
         )
         self.assertIn(
             "Captured GRAY_PYTHON_EXIT_CODE=",
-            self.content,
+            run_stage,
         )
         self.assertIn(
-            "env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/",
-            self.content,
+            "def capturedCode =",
+            run_stage,
         )
         self.assertIn(
-            "Pipeline state error: Python command output ",
-            self.content,
+            "capturedCode ==~ /^\\d+$/",
+            run_stage,
+        )
+        self.assertIn(
+            "Pipeline state error: invalid ",
+            run_stage,
         )
         self.assertNotIn(
             "Gray validation Python process did not run.",
             self.content,
         )
-        self.assertIn(
-            "GRAY_PIPELINE_STATE_ERROR = 'false'",
-            self.content,
-        )
-        self.assertIn(
-            "env.GRAY_PIPELINE_STATE_ERROR = 'true'",
-            self.content,
-        )
-        self.assertEqual(
-            1,
-            self.content.count(
-                "GRAY_PYTHON_EXIT_CODE = 'not_run'"
-            ),
+        self.assertNotIn("GRAY_PIPELINE_STATE_ERROR", self.content)
+        self.assertNotIn(
+            "env.GRAY_PYTHON_EXIT_CODE =",
+            summary_stage,
         )
         self.assertIn(
             '--python-exit-code "$GRAY_PYTHON_EXIT_CODE"',
-            self.content,
+            summary_stage,
         )
         self.assertLess(
             self.content.index("stage('Print Runtime Summary')"),

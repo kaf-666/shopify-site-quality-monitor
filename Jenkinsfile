@@ -26,9 +26,7 @@ pipeline {
         ALLOW_BASELINE_INIT = 'false'
         FORCE_BASELINE_INIT = 'false'
         ALLOW_SIDE_EFFECT_FLOW = 'false'
-        GRAY_PYTHON_EXIT_CODE = 'not_run'
         GRAY_SUMMARY_EXIT_CODE = 'not_run'
-        GRAY_PIPELINE_STATE_ERROR = 'false'
     }
 
     stages {
@@ -171,9 +169,8 @@ pipeline {
                     )
                 ]) {
                     script {
-                        int pythonExitCode
                         if (isUnix()) {
-                            pythonExitCode = sh(
+                            env.GRAY_PYTHON_EXIT_CODE = sh(
                                 script: '''
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
@@ -181,21 +178,31 @@ pipeline {
                                         --page home
                                 ''',
                                 returnStatus: true
-                            )
+                            ).toString()
                         } else {
-                            pythonExitCode = bat(
+                            env.GRAY_PYTHON_EXIT_CODE = bat(
                                 script: '''
-                                    @.venv\\Scripts\\python.exe -u run_all.py --site mondressy_US --viewport desktop --page home
+                                    @.venv\\Scripts\\python.exe -u run_all.py ^
+                                        --site mondressy_US ^
+                                        --viewport desktop ^
+                                        --page home
                                 ''',
                                 returnStatus: true
-                            )
+                            ).toString()
                         }
-                        env.GRAY_PYTHON_EXIT_CODE =
-                            String.valueOf(pythonExitCode)
                         echo(
                             'Captured GRAY_PYTHON_EXIT_CODE=' +
                             env.GRAY_PYTHON_EXIT_CODE
                         )
+                        def capturedCode =
+                            env.GRAY_PYTHON_EXIT_CODE?.trim()
+                        if (!(capturedCode ==~ /^\d+$/)) {
+                            error(
+                                'Pipeline state error: invalid ' +
+                                'GRAY_PYTHON_EXIT_CODE=' +
+                                "${capturedCode}"
+                            )
+                        }
                     }
                 }
             }
@@ -204,38 +211,27 @@ pipeline {
         stage('Print Runtime Summary') {
             steps {
                 script {
-                    if (
-                        !(env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/)
-                    ) {
-                        env.GRAY_PIPELINE_STATE_ERROR = 'true'
-                        env.GRAY_SUMMARY_EXIT_CODE = '2'
-                        echo(
-                            'Pipeline state error: Python command output ' +
-                            'was produced, but its exit code was not captured.'
+                    int summaryExitCode
+                    if (isUnix()) {
+                        summaryExitCode = sh(
+                            returnStatus: true,
+                            script: '''
+                                .venv/bin/python -u \
+                                    -m playwright_checks.runtime.gray_summary \
+                                    --run-id "$VISUAL_RUN_ID" \
+                                    --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
+                            '''
                         )
                     } else {
-                        int summaryExitCode
-                        if (isUnix()) {
-                            summaryExitCode = sh(
-                                returnStatus: true,
-                                script: '''
-                                    .venv/bin/python -u \
-                                        -m playwright_checks.runtime.gray_summary \
-                                        --run-id "$VISUAL_RUN_ID" \
-                                        --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
-                                '''
-                            )
-                        } else {
-                            summaryExitCode = bat(
-                                returnStatus: true,
-                                script: '''
-                                    @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
-                                '''
-                            )
-                        }
-                        env.GRAY_SUMMARY_EXIT_CODE =
-                            String.valueOf(summaryExitCode)
+                        summaryExitCode = bat(
+                            returnStatus: true,
+                            script: '''
+                                @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
+                            '''
+                        )
                     }
+                    env.GRAY_SUMMARY_EXIT_CODE =
+                        String.valueOf(summaryExitCode)
                 }
             }
         }
@@ -307,13 +303,11 @@ pipeline {
         stage('Evaluate Result') {
             steps {
                 script {
-                    if (
-                        env.GRAY_PIPELINE_STATE_ERROR == 'true'
-                        || !(env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/)
-                    ) {
+                    if (!(env.GRAY_PYTHON_EXIT_CODE ==~ /^\d+$/)) {
                         error(
-                            'Pipeline state error: Python command output ' +
-                            'was produced, but its exit code was not captured.'
+                            'Pipeline state error: invalid ' +
+                            'GRAY_PYTHON_EXIT_CODE=' +
+                            env.GRAY_PYTHON_EXIT_CODE
                         )
                     }
                     if (env.GRAY_PYTHON_EXIT_CODE != '0') {

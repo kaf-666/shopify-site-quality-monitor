@@ -261,25 +261,81 @@ def audit_dynamic_region(element, region, page_config=None):
             const visibleItems = items.filter(visibleWithinRoot);
             const itemData = visibleItems.map((item) => {
                 const image = item.querySelector('img');
-                const title = item.querySelector(
-                    options.titleSelector
-                    || '.collection-item__title, '
-                    + '[class*="collection"][class*="title"], '
-                    + '.grid-product__title, .card__heading, '
-                    + '.product-card__title, [class*="product"][class*="title"]'
+                const link = item.matches('a[href]')
+                    ? item
+                    : item.querySelector('a[href]');
+                const configuredTitle = options.titleSelector
+                    ? item.querySelector(options.titleSelector)
+                    : null;
+                const productTitle = (
+                    options.regionType === 'category_carousel'
+                        ? null
+                        : item.querySelector(
+                            '.grid-product__title, .card__heading, '
+                            + '.product-card__title, '
+                            + '[class*="product"][class*="title"]'
+                        )
                 );
                 const price = item.querySelector(
                     options.priceSelector
                     || '.price, [class*="price"]'
                 );
+                const textOf = (node) => (
+                    node
+                        ? String(node.textContent || '').trim()
+                        : ''
+                );
+                const configuredTitleText = textOf(configuredTitle);
+                const linkText = textOf(link);
+                const ariaLabel = String(
+                    (link && link.getAttribute('aria-label'))
+                    || item.getAttribute('aria-label')
+                    || (image && image.getAttribute('aria-label'))
+                    || ''
+                ).trim();
+                const imageAlt = String(
+                    (image && image.getAttribute('alt')) || ''
+                ).trim();
+                let title = '';
+                let titleSource = null;
+                if (options.regionType === 'category_carousel') {
+                    const candidates = [
+                        [
+                            configuredTitleText,
+                            'configured_title_selector',
+                        ],
+                        [linkText, 'link_text'],
+                        [ariaLabel, 'aria_label'],
+                        [imageAlt, 'image_alt'],
+                    ];
+                    const selected = candidates.find(
+                        ([value]) => Boolean(value)
+                    );
+                    if (selected) {
+                        [title, titleSource] = selected;
+                    }
+                } else {
+                    title = configuredTitleText || textOf(productTitle);
+                    if (configuredTitleText) {
+                        titleSource = 'configured_title_selector';
+                    } else if (title) {
+                        titleSource = 'product_title_selector';
+                    }
+                }
                 return {
                     rect: rectOf(item),
-                    href: (item.querySelector('a[href]') || {}).href || '',
+                    visible: true,
+                    href: String((link && link.href) || '').trim(),
                     image: image ? (image.currentSrc || image.src || '') : '',
                     imageReady: image
-                        ? Boolean(image.complete && image.naturalWidth > 0)
+                        ? Boolean(
+                            image.complete
+                            && image.naturalWidth > 0
+                            && image.naturalHeight > 0
+                        )
                         : false,
-                    title: title ? String(title.textContent || '').trim() : '',
+                    title,
+                    titleSource,
                     price: price ? String(price.textContent || '').trim() : '',
                     availability: String(
                         item.getAttribute('data-available') || ''
@@ -317,6 +373,7 @@ def audit_dynamic_region(element, region, page_config=None):
             "titleSelector": checks.get("title_selector"),
             "priceSelector": checks.get("price_selector"),
             "configuredCarousel": region_type.endswith("carousel"),
+            "regionType": region_type,
         },
     )
     result = evaluate_structural_snapshot(
@@ -389,6 +446,25 @@ def evaluate_structural_snapshot(
         1 for item in items if item.get("imageReady")
     )
     image_total_count = len(items)
+    link_count = sum(1 for item in items if item.get("href"))
+    title_count = sum(1 for item in items if item.get("title"))
+    price_count = sum(1 for item in items if item.get("price"))
+    title_source_counts = {}
+    for item in items:
+        source = item.get("titleSource")
+        if source:
+            title_source_counts[source] = (
+                title_source_counts.get(source, 0) + 1
+            )
+    title_sources = sorted(title_source_counts)
+    if len(title_sources) == 1:
+        title_source = title_sources[0]
+    elif title_sources:
+        title_source = "mixed"
+    else:
+        title_source = None
+    is_category_carousel = normalized_type == "category_carousel"
+    is_product_carousel = normalized_type == "product_carousel"
     count_rules_enabled = (
         strategy == "layout_only"
         or checks.get("minimum_count") is not None
@@ -408,6 +484,10 @@ def evaluate_structural_snapshot(
         "hidden_count": hidden_count,
         "image_success_count": image_success_count,
         "image_total_count": image_total_count,
+        "link_count": link_count,
+        "title_count": title_count,
+        "title_source": title_source,
+        "title_source_counts": title_source_counts,
         "is_carousel": is_carousel,
         "region_type": normalized_type,
         "page_horizontal_overflow": page_overflow,
@@ -446,17 +526,56 @@ def evaluate_structural_snapshot(
             if full_rows and len(set(full_rows)) > 1:
                 issues.append("product_grid_column_count_unexpected")
         if is_carousel:
-            require_image = checks.get("check_image_visible", True)
-            require_title = checks.get("check_title_present", True)
-            require_price = checks.get("check_price_present", True)
-            valid_cards = [
-                item
-                for item in items
-                if (not require_image or item.get("imageReady"))
-                and (not require_title or item.get("title"))
-                and (not require_price or item.get("price"))
-            ]
+            if is_category_carousel:
+                valid_cards = [
+                    item
+                    for item in items
+                    if item.get("visible", True)
+                    and item.get("imageReady")
+                    and item.get("href")
+                    and item.get("title")
+                ]
+            elif is_product_carousel:
+                valid_cards = [
+                    item
+                    for item in items
+                    if item.get("visible", True)
+                    and item.get("imageReady")
+                    and item.get("href")
+                    and item.get("title")
+                    and item.get("price")
+                ]
+            else:
+                require_image = checks.get("check_image_visible", True)
+                require_title = checks.get("check_title_present", True)
+                require_price = checks.get("check_price_present", True)
+                valid_cards = [
+                    item
+                    for item in items
+                    if (
+                        not require_image
+                        or item.get("imageReady")
+                    )
+                    and (
+                        not require_title
+                        or item.get("title")
+                    )
+                    and (
+                        not require_price
+                        or item.get("price")
+                    )
+                ]
             diagnostics["valid_card_count"] = len(valid_cards)
+            diagnostics["missing_field_counts"] = {
+                "link": image_total_count - link_count,
+                "title": image_total_count - title_count,
+                "image": image_total_count - image_success_count,
+                "price": (
+                    None
+                    if is_category_carousel
+                    else image_total_count - price_count
+                ),
+            }
             if visible_count > 0 and not valid_cards:
                 issues.append("carousel_item_structure_missing")
         else:

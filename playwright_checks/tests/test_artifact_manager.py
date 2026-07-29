@@ -641,6 +641,206 @@ class DynamicContentPolicyTests(unittest.TestCase):
         self.assertTrue(diagnostics["is_carousel"])
         self.assertEqual(2, diagnostics["valid_card_count"])
 
+    def test_category_card_with_link_text_is_valid_without_price(self):
+        card = self.item(
+            0,
+            href="/collections/wedding-guest",
+            title="Wedding Guest",
+            titleSource="link_text",
+            price="",
+        )
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 320, "height": 180},
+                "itemCount": 1,
+                "visibleItemCount": 1,
+                "isCarousel": True,
+                "items": [card],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("passed", result["structural_status"])
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(1, diagnostics["valid_card_count"])
+        self.assertEqual(1, diagnostics["link_count"])
+        self.assertEqual(1, diagnostics["title_count"])
+        self.assertEqual("link_text", diagnostics["title_source"])
+        self.assertIsNone(
+            diagnostics["missing_field_counts"]["price"]
+        )
+
+    def test_category_title_from_aria_label_or_image_alt_is_valid(self):
+        for source in ("aria_label", "image_alt"):
+            with self.subTest(source=source):
+                card = self.item(
+                    0,
+                    href="/collections/formal",
+                    title="Formal Dresses",
+                    titleSource=source,
+                    price="",
+                )
+                result = evaluate_structural_snapshot(
+                    {
+                        "visible": True,
+                        "rootRect": {"width": 320, "height": 180},
+                        "itemCount": 1,
+                        "visibleItemCount": 1,
+                        "isCarousel": True,
+                        "items": [card],
+                    },
+                    "mask_content",
+                    {"minimum_count": 1},
+                    region_type="category_carousel",
+                )
+
+                self.assertEqual(
+                    "passed",
+                    result["structural_status"],
+                )
+                diagnostics = result["structural_diagnostics"]
+                self.assertEqual(1, diagnostics["valid_card_count"])
+                self.assertEqual(source, diagnostics["title_source"])
+                self.assertEqual(
+                    {source: 1},
+                    diagnostics["title_source_counts"],
+                )
+
+    def test_category_card_without_href_is_invalid(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 320, "height": 180},
+                "itemCount": 1,
+                "visibleItemCount": 1,
+                "isCarousel": True,
+                "items": [
+                    self.item(
+                        0,
+                        href="",
+                        title="Prom Dresses",
+                        titleSource="image_alt",
+                        price="",
+                    )
+                ],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "carousel_item_structure_missing",
+            result["structural_issues"],
+        )
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(0, diagnostics["valid_card_count"])
+        self.assertEqual(1, diagnostics["missing_field_counts"]["link"])
+
+    def test_category_card_with_failed_image_is_invalid(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 320, "height": 180},
+                "itemCount": 1,
+                "visibleItemCount": 1,
+                "isCarousel": True,
+                "items": [
+                    self.item(
+                        0,
+                        href="/collections/prom",
+                        title="Prom Dresses",
+                        titleSource="aria_label",
+                        imageReady=False,
+                        price="",
+                    )
+                ],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "carousel_item_structure_missing",
+            result["structural_issues"],
+        )
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(0, diagnostics["valid_card_count"])
+        self.assertEqual(1, diagnostics["missing_field_counts"]["image"])
+
+    def test_ten_valid_category_cards_pass_with_complete_counts(self):
+        cards = [
+            self.item(
+                index,
+                href=f"/collections/category-{index}",
+                title=f"Category {index}",
+                titleSource="link_text",
+                price="",
+            )
+            for index in range(10)
+        ]
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 1200, "height": 180},
+                "itemCount": 10,
+                "visibleItemCount": 10,
+                "isCarousel": True,
+                "items": cards,
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("passed", result["structural_status"])
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(10, diagnostics["matched_count"])
+        self.assertEqual(10, diagnostics["visible_count"])
+        self.assertEqual(10, diagnostics["valid_card_count"])
+        self.assertEqual(10, diagnostics["link_count"])
+        self.assertEqual(10, diagnostics["title_count"])
+        self.assertEqual(10, diagnostics["image_success_count"])
+        self.assertEqual(
+            {
+                "link": 0,
+                "title": 0,
+                "image": 0,
+                "price": None,
+            },
+            diagnostics["missing_field_counts"],
+        )
+
+    def test_product_carousel_without_price_remains_invalid(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 320, "height": 180},
+                "itemCount": 1,
+                "visibleItemCount": 1,
+                "isCarousel": True,
+                "items": [self.item(0, price="")],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="product_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "carousel_item_structure_missing",
+            result["structural_issues"],
+        )
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(0, diagnostics["valid_card_count"])
+        self.assertEqual(1, diagnostics["missing_field_counts"]["price"])
+
     def test_wrong_home_item_selector_returns_full_diagnostics(self):
         class FakeElement:
             @staticmethod
@@ -701,6 +901,12 @@ class DynamicContentPolicyTests(unittest.TestCase):
             "hidden_count",
             "image_success_count",
             "image_total_count",
+            "valid_card_count",
+            "link_count",
+            "title_count",
+            "title_source",
+            "title_source_counts",
+            "missing_field_counts",
             "is_carousel",
             "audit_duration_ms",
         }
@@ -714,6 +920,9 @@ class DynamicContentPolicyTests(unittest.TestCase):
             diagnostics["region_selector"].startswith("xpath=")
         )
         self.assertEqual(0, diagnostics["matched_count"])
+        self.assertIsNone(
+            diagnostics["missing_field_counts"]["price"]
+        )
 
     def test_carousel_matched_zero_and_visible_zero_fail(self):
         result = evaluate_structural_snapshot(

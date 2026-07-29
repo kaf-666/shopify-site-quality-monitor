@@ -443,10 +443,10 @@ not invoked by this Jenkinsfile.
 Jenkins uses `SCREENSHOT_RETENTION_MODE=evidence_only` and
 `VISUAL_STRICT_WARNINGS=false`. `CONTENT_CHANGED`, visual warnings, and
 report-only Runtime findings do not block the gray build; a visual failure
-does. Both platform branches assign `returnStatus` to one outer integer, which
-is copied with `String.valueOf` to `env.GRAY_PYTHON_EXIT_CODE` and validated as
-numeric before the summary. Statuses 0, 1, and 2 therefore remain available
-even when the monitor command is nonzero.
+does. Each platform branch writes its `returnStatus` result directly to
+`env.GRAY_PYTHON_EXIT_CODE` with `.toString()` and validates the saved value in
+the same Jenkins `script` block. Statuses 0, 1, and 2 therefore remain
+available even when the monitor command is nonzero.
 
 Build and archived-artifact retention are separate:
 
