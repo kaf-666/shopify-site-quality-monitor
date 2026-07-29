@@ -211,37 +211,61 @@ pipeline {
         stage('Print Runtime Summary') {
             steps {
                 script {
+                    def exitCodeFile = '.gray_summary_exit_code'
                     if (isUnix()) {
-                        env.GRAY_SUMMARY_EXIT_CODE = sh(
-                            returnStatus: true,
-                            script: '''
-                                .venv/bin/python -u \
-                                    -m playwright_checks.runtime.gray_summary \
-                                    --run-id "$VISUAL_RUN_ID" \
-                                    --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
-                            '''
-                        ).toString()
+                        sh """
+                            set +e
+                            rm -f -- '${exitCodeFile}'
+
+                            .venv/bin/python -u \
+                                -m playwright_checks.runtime.gray_summary \
+                                --run-id '${env.VISUAL_RUN_ID}' \
+                                --python-exit-code '${env.GRAY_PYTHON_EXIT_CODE}'
+
+                            summary_code=\$?
+                            printf '%s' "\$summary_code" \
+                                > '${exitCodeFile}'
+                            exit 0
+                        """
                     } else {
-                        env.GRAY_SUMMARY_EXIT_CODE = bat(
-                            returnStatus: true,
-                            script: '''
-                                @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
-                            '''
-                        ).toString()
+                        bat """
+                            @echo off
+                            if exist "${exitCodeFile}" del /q "${exitCodeFile}"
+
+                            .venv\\Scripts\\python.exe -u ^
+                                -m playwright_checks.runtime.gray_summary ^
+                                --run-id "${env.VISUAL_RUN_ID}" ^
+                                --python-exit-code "${env.GRAY_PYTHON_EXIT_CODE}"
+
+                            set summary_code=%ERRORLEVEL%
+                            > "${exitCodeFile}" echo %summary_code%
+                            exit /b 0
+                        """
+                    }
+
+                    if (fileExists(exitCodeFile)) {
+                        def capturedCode = readFile(
+                            file: exitCodeFile
+                        ).trim()
+                        if (capturedCode ==~ /^\d+$/) {
+                            env.GRAY_SUMMARY_EXIT_CODE = capturedCode
+                        } else {
+                            env.GRAY_SUMMARY_EXIT_CODE = '98'
+                            echo(
+                                'Invalid summary exit-code file content: ' +
+                                capturedCode
+                            )
+                        }
+                    } else {
+                        env.GRAY_SUMMARY_EXIT_CODE = '98'
+                        echo(
+                            'Summary exit-code file was not created.'
+                        )
                     }
                     echo(
                         'Captured GRAY_SUMMARY_EXIT_CODE=' +
                         env.GRAY_SUMMARY_EXIT_CODE
                     )
-                    def capturedSummaryCode =
-                        env.GRAY_SUMMARY_EXIT_CODE?.trim()
-                    if (!(capturedSummaryCode ==~ /^\d+$/)) {
-                        error(
-                            'Pipeline state error: invalid ' +
-                            'GRAY_SUMMARY_EXIT_CODE=' +
-                            "${capturedSummaryCode ?: '<empty>'}"
-                        )
-                    }
                 }
             }
         }
@@ -306,6 +330,29 @@ pipeline {
                             'status; result evaluation will continue.'
                         )
                     }
+
+                    def exitCodeFile = '.gray_summary_exit_code'
+                    int exitCodeFileCleanupCode
+                    if (isUnix()) {
+                        exitCodeFileCleanupCode = sh(
+                            script: "rm -f -- '${exitCodeFile}'",
+                            returnStatus: true
+                        )
+                    } else {
+                        exitCodeFileCleanupCode = bat(
+                            script: """
+                                @if not exist "${exitCodeFile}" exit /b 0
+                                @del /q "${exitCodeFile}"
+                            """,
+                            returnStatus: true
+                        )
+                    }
+                    if (exitCodeFileCleanupCode != 0) {
+                        echo(
+                            'Warning: failed to remove summary exit-code ' +
+                            'file; result evaluation will continue.'
+                        )
+                    }
                 }
             }
         }
@@ -326,22 +373,22 @@ pipeline {
                             env.GRAY_PYTHON_EXIT_CODE
                         )
                     }
-                    if (!(env.GRAY_SUMMARY_EXIT_CODE ==~ /^\d+$/)) {
+                    def summaryCode =
+                        env.GRAY_SUMMARY_EXIT_CODE?.trim()
+                    if (!(summaryCode ==~ /^\d+$/)) {
                         error(
                             'Pipeline state error: invalid ' +
                             'GRAY_SUMMARY_EXIT_CODE=' +
-                            (
-                                env.GRAY_SUMMARY_EXIT_CODE
-                                ?: '<empty>'
-                            )
+                            "${summaryCode}"
                         )
                     }
-                    if (env.GRAY_SUMMARY_EXIT_CODE != '0') {
+                    if (summaryCode != '0') {
                         error(
-                            'Runtime gray summary exit code: ' +
-                            env.GRAY_SUMMARY_EXIT_CODE
+                            'Runtime gray summary validation failed ' +
+                            "(exit code=${summaryCode})."
                         )
                     }
+                    echo 'Mondressy US Runtime gray validation passed.'
                 }
             }
         }

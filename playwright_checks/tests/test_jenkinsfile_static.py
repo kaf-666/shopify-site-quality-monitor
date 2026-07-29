@@ -99,7 +99,9 @@ class JenkinsfileStaticTests(unittest.TestCase):
         summary_stage = self.content[summary_index:archive_index]
         archive_stage = self.content[archive_index:evaluate_index]
         self.assertEqual(2, run_stage.count("returnStatus: true"))
-        self.assertIn("returnStatus: true", summary_stage)
+        self.assertNotIn("error(", summary_stage)
+        self.assertIn("exit 0", summary_stage)
+        self.assertIn("exit /b 0", summary_stage)
         self.assertIn("archiveArtifacts(", archive_stage)
         self.assertIn("allowEmptyArchive: true", archive_stage)
         self.assertIn("catch (archiveError)", archive_stage)
@@ -201,7 +203,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             summary_stage,
         )
         self.assertIn(
-            '--python-exit-code "$GRAY_PYTHON_EXIT_CODE"',
+            "--python-exit-code '${env.GRAY_PYTHON_EXIT_CODE}'",
             summary_stage,
         )
         self.assertLess(
@@ -213,7 +215,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             self.content.index("stage('Evaluate Result')"),
         )
 
-    def test_summary_exit_code_is_assigned_directly_to_env(self):
+    def test_summary_exit_code_uses_workspace_file(self):
         summary_index = self.content.index(
             "stage('Print Runtime Summary')"
         )
@@ -224,25 +226,33 @@ class JenkinsfileStaticTests(unittest.TestCase):
         after_summary = self.content[archive_index:]
         post_block = self.content[post_index:]
 
-        unix_direct_assignment = re.search(
-            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*sh\("
-            r".*?returnStatus:\s*true.*?"
-            r"\)\.toString\(\)",
+        self.assertIn(
+            "def exitCodeFile = '.gray_summary_exit_code'",
             summary_stage,
-            re.DOTALL,
         )
-        windows_direct_assignment = re.search(
-            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*bat\("
-            r".*?returnStatus:\s*true.*?"
-            r"\)\.toString\(\)",
+        self.assertIn("summary_code=\\$?", summary_stage)
+        self.assertIn("%ERRORLEVEL%", summary_stage)
+        self.assertIn(
+            "printf '%s' \"\\$summary_code\"",
             summary_stage,
-            re.DOTALL,
         )
-        self.assertIsNotNone(unix_direct_assignment)
-        self.assertIsNotNone(windows_direct_assignment)
+        self.assertIn(
+            '> "${exitCodeFile}" echo %summary_code%',
+            summary_stage,
+        )
+        self.assertIn("exit 0", summary_stage)
+        self.assertIn("exit /b 0", summary_stage)
+        self.assertIn("fileExists(exitCodeFile)", summary_stage)
+        self.assertIn("readFile(", summary_stage)
+        self.assertNotIn("returnStatus: true", summary_stage)
+        self.assertNotIn("error(", summary_stage)
         self.assertNotIn("int summaryExitCode", self.content)
         self.assertNotIn("def summaryExitCode", self.content)
         self.assertNotIn("String.valueOf(summaryExitCode)", self.content)
+        self.assertNotRegex(
+            summary_stage,
+            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*(?:sh|bat)\(",
+        )
         self.assertEqual(
             1,
             self.content.count(
@@ -251,24 +261,28 @@ class JenkinsfileStaticTests(unittest.TestCase):
         )
         self.assertEqual(
             2,
-            len(
-                re.findall(
-                    r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*(?:sh|bat)\(",
-                    self.content,
-                )
+            summary_stage.count(
+                "env.GRAY_SUMMARY_EXIT_CODE = '98'"
             ),
         )
-        self.assertEqual(2, summary_stage.count("returnStatus: true"))
         self.assertIn(
             "Captured GRAY_SUMMARY_EXIT_CODE=",
             summary_stage,
         )
         self.assertIn(
-            "def capturedSummaryCode =",
+            "env.GRAY_SUMMARY_EXIT_CODE = capturedCode",
             summary_stage,
         )
         self.assertIn(
-            "capturedSummaryCode ==~ /^\\d+$/",
+            "capturedCode ==~ /^\\d+$/",
+            summary_stage,
+        )
+        self.assertIn(
+            "Invalid summary exit-code file content: ",
+            summary_stage,
+        )
+        self.assertIn(
+            "Summary exit-code file was not created.",
             summary_stage,
         )
         self.assertNotRegex(
@@ -282,17 +296,39 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertLess(summary_index, archive_index)
         self.assertLess(archive_index, evaluate_index)
 
+    def test_summary_exit_code_file_is_cleaned_before_evaluate(self):
+        cleanup_index = self.content.index(
+            "stage('Clean Current Run Temporary Artifacts')"
+        )
+        evaluate_index = self.content.index("stage('Evaluate Result')")
+        cleanup_stage = self.content[cleanup_index:evaluate_index]
+
+        self.assertIn(".gray_summary_exit_code", cleanup_stage)
+        self.assertIn("rm -f --", cleanup_stage)
+        self.assertIn("@del /q", cleanup_stage)
+        self.assertIn("returnStatus: true", cleanup_stage)
+        self.assertIn(
+            "Warning: failed to remove summary exit-code ",
+            cleanup_stage,
+        )
+        self.assertNotIn("error(", cleanup_stage)
+        self.assertLess(cleanup_index, evaluate_index)
+
     def test_evaluate_summary_exit_code_matrix(self):
         evaluate_index = self.content.index("stage('Evaluate Result')")
         post_index = self.content.index("    post {")
         evaluate_stage = self.content[evaluate_index:post_index]
 
         self.assertIn(
-            "env.GRAY_SUMMARY_EXIT_CODE ==~ /^\\d+$/",
+            "def summaryCode =",
             evaluate_stage,
         )
         self.assertIn(
-            "env.GRAY_SUMMARY_EXIT_CODE != '0'",
+            "summaryCode ==~ /^\\d+$/",
+            evaluate_stage,
+        )
+        self.assertIn(
+            "summaryCode != '0'",
             evaluate_stage,
         )
         self.assertIn(
@@ -300,11 +336,11 @@ class JenkinsfileStaticTests(unittest.TestCase):
             evaluate_stage,
         )
         self.assertIn(
-            "Runtime gray summary exit code: ",
+            "Runtime gray summary validation failed ",
             evaluate_stage,
         )
         self.assertNotIn(
-            "Runtime gray summary validation failed.",
+            "env.GRAY_SUMMARY_EXIT_CODE =",
             evaluate_stage,
         )
         self.assertEqual(
@@ -324,6 +360,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
             ("0", "success"),
             ("1", "summary_error:1"),
             ("2", "summary_error:2"),
+            ("98", "summary_error:98"),
             ("not_run", "pipeline_state_error"),
             ("", "pipeline_state_error"),
         )
