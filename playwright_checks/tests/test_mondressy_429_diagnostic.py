@@ -25,6 +25,7 @@ from playwright_checks.diagnostics.mondressy_429 import (
     common_request_headers,
     interpret_results,
     read_credentials,
+    run_api_request_probe,
     run_diagnostics,
 )
 
@@ -109,6 +110,55 @@ class FakePlaywrightManager:
 
     def __exit__(self, *_args):
         return False
+
+
+class FakeAPIResponse:
+    def __init__(
+        self,
+        status=200,
+        url="https://mondressy.com/",
+        headers=None,
+        body=b"normal",
+    ):
+        self.status = status
+        self.url = url
+        self.headers = dict(headers or {})
+        self._body = body
+        self.disposed = False
+
+    def body(self):
+        return self._body
+
+    def dispose(self):
+        self.disposed = True
+
+
+class FakeAPIRequestContext:
+    def __init__(self, response=None, error=None):
+        self.response = response
+        self.error = error
+        self.disposed = False
+
+    def get(self, *_args, **_kwargs):
+        if self.error:
+            raise self.error
+        return self.response
+
+    def dispose(self):
+        self.disposed = True
+
+
+class FakeAPIRequestFactory:
+    def __init__(self, contexts):
+        self.contexts = list(contexts)
+
+    def new_context(self, **_kwargs):
+        return self.contexts.pop(0)
+
+
+class FakeAPIPlaywright:
+    def __init__(self, contexts):
+        self.request = FakeAPIRequestFactory(contexts)
 
 
 def completed_result(probe, host, initial_url):
@@ -210,6 +260,94 @@ class Mondressy429DiagnosticTests(unittest.TestCase):
             TEST_ENV["MONDRESSY_US_SHOPIFY_SIGNATURE"],
             fields["body_preview"],
         )
+
+    def test_api_request_reads_supported_headers_status_and_body_safely(self):
+        response = FakeAPIResponse(
+            status=429,
+            headers={
+                "server": "fixture-origin",
+                "cf-ray": "fixture-ray",
+                "retry-after": "30",
+                "content-type": "text/plain; charset=utf-8",
+            },
+            body=(
+                b"local_rate_limited "
+                + TEST_ENV["MONDRESSY_US_SHOPIFY_SIGNATURE"].encode("utf-8")
+            ),
+        )
+        context = FakeAPIRequestContext(response=response)
+        playwright = FakeAPIPlaywright([context])
+
+        result = run_api_request_probe(
+            playwright,
+            "mondressy.com",
+            "https://mondressy.com/",
+            common_request_headers(
+                {
+                    header_name: TEST_ENV[env_name]
+                    for env_name, header_name in CREDENTIALS
+                }
+            ),
+            tuple(TEST_ENV.values()),
+        )
+
+        self.assertEqual(429, result["status"])
+        self.assertEqual("fixture-origin", result["server"])
+        self.assertEqual("fixture-ray", result["cf_ray"])
+        self.assertEqual("30", result["retry_after"])
+        self.assertEqual(
+            "local_rate_limited",
+            result["body_category"],
+        )
+        self.assertTrue(response.disposed)
+        self.assertTrue(context.disposed)
+        for secret in TEST_ENV.values():
+            self.assertNotIn(secret, repr(result))
+
+    def test_api_request_exception_is_contained_for_later_probes(self):
+        failed_context = FakeAPIRequestContext(
+            error=RuntimeError(
+                TEST_ENV["MONDRESSY_US_SHOPIFY_SIGNATURE"]
+            )
+        )
+        successful_response = FakeAPIResponse()
+        successful_context = FakeAPIRequestContext(
+            response=successful_response
+        )
+        playwright = FakeAPIPlaywright(
+            [failed_context, successful_context]
+        )
+        headers = common_request_headers(
+            {
+                header_name: TEST_ENV[env_name]
+                for env_name, header_name in CREDENTIALS
+            }
+        )
+        secrets = tuple(TEST_ENV.values())
+
+        failed = run_api_request_probe(
+            playwright,
+            "mondressy.com",
+            "https://mondressy.com/",
+            headers,
+            secrets,
+        )
+        succeeded = run_api_request_probe(
+            playwright,
+            "www.mondressy.com",
+            "https://www.mondressy.com/",
+            headers,
+            secrets,
+        )
+
+        self.assertEqual("probe_error", failed["body_category"])
+        self.assertIsNotNone(failed["error"])
+        self.assertEqual(200, succeeded["status"])
+        self.assertEqual("normal", succeeded["body_category"])
+        self.assertTrue(failed_context.disposed)
+        self.assertTrue(successful_context.disposed)
+        for secret in TEST_ENV.values():
+            self.assertNotIn(secret, repr(failed))
 
     def test_sensitive_redirect_query_is_redacted(self):
         safe = _safe_url(

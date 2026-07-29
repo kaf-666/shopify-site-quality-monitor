@@ -122,8 +122,10 @@ $env:MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT="<secret>"
 ```
 
 The values are injected as `Signature`, `Signature-Input`, and
-`Signature-Agent` only for exact `mondressy.com`/`www.mondressy.com` requests.
-Do not commit these values.
+`Signature-Agent` only for exact hosts listed in `signed_request_hosts`.
+The current `mondressy_US` production entry and only signed host is
+`mondressy.com`; redirects are recorded but `www.mondressy.com` is not
+automatically signed. Do not commit the credential values.
 
 ### Mondressy 429 diagnostic
 
@@ -250,19 +252,20 @@ It uses the currently selected site configuration.
 ## Jenkins
 
 The current `Jenkinsfile` is a deliberately narrow, manually triggered
-Mondressy 429 diagnostic. It:
+Mondressy US home-page Runtime gray validation. It:
 
 1. Rejects non-user-triggered builds.
 2. Validates and then rebinds the three Jenkins string credentials without
    printing their values.
 3. Installs dependencies and Playwright Chromium, then smoke-tests browser
    launch.
-4. Runs curl, `APIRequestContext`, and Chromium in that order against
-   `https://mondressy.com/` and `https://www.mondressy.com/`.
-5. Uses the same requested User-Agent, Accept, Accept-Language, Cache-Control,
-   Referer, and signed headers for all six combinations.
-6. Uses Chromium context `extra_http_headers` plus an explicit `page.goto`
-   referer; it does not use Route to inject signed headers.
-7. Archives only the redacted diagnostic JSON.
+4. Runs only the `mondressy_US` desktop Home check, whose configured entry is
+   `https://mondressy.com`.
+5. Preserves the production Route-based signed-header injection and signs only
+   `mondressy.com`.
+6. Captures the monitor and summary exit codes with `returnStatus`, archives
+   evidence, and only then evaluates the result.
+7. Keeps baseline initialization and side-effect flows disabled.
 
-The pipeline does not invoke the visual runner or any side-effect flow.
+The six-probe command above remains available as a standalone diagnostic; it is
+not invoked by this Jenkinsfile.

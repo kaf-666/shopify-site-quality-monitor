@@ -38,6 +38,19 @@ class AccessBlockedError(Exception):
     """Raised when the browser lands on an anti-bot or access-denied page."""
 
 
+class TerminalMainDocumentError(AccessBlockedError):
+    """Raised when the main document status makes visual checks unsafe."""
+
+    def __init__(self, status, url):
+        self.status = status
+        self.url = url
+        super().__init__(
+            _redact_runtime_error(
+                f"Terminal main document response: status={status}, url={url}"
+            )
+        )
+
+
 TRANSIENT_VERIFICATION_PATTERNS = [
     "just a moment",
     "connection needs to be verified",
@@ -146,13 +159,16 @@ def open_page_with_retry(
                 wait_until="domcontentloaded",
                 timeout=45000,
             )
+            status = response.status if response else None
+            if is_terminal_main_document_status(status):
+                raise TerminalMainDocumentError(status, page.url)
             assert_page_not_blocked(page)
             wait_until_ready(page)
             time.sleep(1)
             assert_page_not_blocked(page)
             wait_until_ready(page)
             final_url = page.url
-            status = response.status if response else None
+            redirect_chain = _response_redirect_chain(response, url)
             attempt_result = {
                 "attempt": attempt,
                 "navigation_sequence": navigation_sequence,
@@ -162,6 +178,7 @@ def open_page_with_retry(
                 "final_url": final_url,
                 "status": status,
                 "redirected": final_url.rstrip("/") != url.rstrip("/"),
+                "redirect_chain": redirect_chain,
                 "timestamp": time.time(),
             }
             navigation_attempts.append(attempt_result)
@@ -176,6 +193,7 @@ def open_page_with_retry(
                 "status": status,
                 "main_document_status": status,
                 "redirected": attempt_result["redirected"],
+                "redirect_chain": redirect_chain,
                 "navigation_attempts": navigation_attempts,
                 "navigation_error": None,
             }
@@ -241,6 +259,10 @@ def _report_navigation_attempt(
             final_url
             and final_url.rstrip("/") != requested_url.rstrip("/")
         ),
+        "redirect_chain": _response_redirect_chain(
+            response,
+            requested_url,
+        ),
         "error_type": type(error).__name__,
         "error_message": _redact_runtime_error(error),
         "timestamp": time.time(),
@@ -251,6 +273,59 @@ def _report_navigation_attempt(
             attempt_result,
         )
     return attempt_result
+
+
+def is_terminal_main_document_status(status):
+    return status in {401, 403, 429} or (
+        isinstance(status, int) and status >= 500
+    )
+
+
+def _response_redirect_chain(response, requested_url):
+    if response is None:
+        return []
+
+    chain = []
+    try:
+        request = response.request
+    except Exception:
+        request = None
+
+    while request is not None:
+        try:
+            request_response = (
+                response
+                if request is response.request
+                else request.response()
+            )
+            status = (
+                request_response.status
+                if request_response is not None
+                else None
+            )
+        except Exception:
+            status = None
+        chain.append(
+            {
+                "url": getattr(request, "url", requested_url),
+                "status": status,
+            }
+        )
+        try:
+            request = request.redirected_from
+        except Exception:
+            request = None
+
+    if chain:
+        chain.reverse()
+        return chain
+
+    return [
+        {
+            "url": getattr(response, "url", requested_url),
+            "status": getattr(response, "status", None),
+        }
+    ]
 
 
 def _safe_navigation_callback(callback, attempt_result):

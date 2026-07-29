@@ -17,7 +17,10 @@ from playwright_checks.runtime.session import (
     runtime_failure_messages,
 )
 from playwright_checks.utils.visual import build_result
-from playwright_checks.utils.waits import open_page_with_retry
+from playwright_checks.utils.waits import (
+    TerminalMainDocumentError,
+    open_page_with_retry,
+)
 
 
 NORMAL_HTML = """
@@ -132,6 +135,27 @@ class RuntimeHealthPlaywrightTests(unittest.TestCase):
             1,
         )
         self.assertEqual([], payload["findings"])
+
+    def test_terminal_status_writes_minimal_anomaly_page_evidence(self):
+        session = self._session()
+        session.start_before_navigation()
+        self.page.set_content("<title>Rate limited</title><body>limited</body>")
+
+        summary = self._finalize(session, status=429)
+
+        payload = json.loads(
+            (Path(self.temp.name) / "runtime" / "attempt-1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        terminal = payload["pre_visual_health"]["terminal_page_evidence"]
+        self.assertEqual(429, terminal["status"])
+        self.assertEqual(
+            "https://fixture.test/runtime",
+            terminal["final_url"],
+        )
+        self.assertIn("body_text_length", terminal)
+        self.assertEqual("failed", summary["runtime_status"])
 
     def test_page_error_is_warning_when_core_content_is_present(self):
         session = self._session()
@@ -600,6 +624,132 @@ class RuntimeCompatibilityTests(unittest.TestCase):
         self.assertEqual(200, result["main_document_status"])
         self.assertEqual(2, len(result["navigation_attempts"]))
         self.assertIsNone(result["navigation_error"])
+        self.assertEqual(
+            [
+                {
+                    "url": "https://fixture.test/runtime",
+                    "status": 200,
+                }
+            ],
+            result["redirect_chain"],
+        )
+
+    def test_terminal_main_document_status_skips_readiness_and_retries(self):
+        class FakeResponse:
+            status = 429
+            url = "https://fixture.test/runtime"
+
+        class FakePage:
+            url = "https://fixture.test/runtime"
+
+            def __init__(self):
+                self.calls = 0
+
+            def goto(self, *_args, **_kwargs):
+                self.calls += 1
+                return FakeResponse()
+
+        attempts = []
+        readiness_calls = []
+        page = FakePage()
+
+        with self.assertRaises(TerminalMainDocumentError):
+            open_page_with_retry(
+                page,
+                "https://fixture.test/runtime",
+                lambda _page: readiness_calls.append(True),
+                attempts=3,
+                delay=0,
+                on_navigation_attempt=attempts.append,
+            )
+
+        self.assertEqual(1, page.calls)
+        self.assertEqual([], readiness_calls)
+        self.assertEqual(1, len(attempts))
+        self.assertEqual(429, attempts[0]["status"])
+        self.assertEqual(
+            "TerminalMainDocumentError",
+            attempts[0]["error_type"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "url": "https://fixture.test/runtime",
+                    "status": 429,
+                }
+            ],
+            attempts[0]["redirect_chain"],
+        )
+
+    def test_navigation_redirect_chain_records_each_document_response(self):
+        class FakeRequest:
+            def __init__(self, url, redirected_from=None):
+                self.url = url
+                self.redirected_from = redirected_from
+                self._response = None
+
+            def response(self):
+                return self._response
+
+        class FakeResponse:
+            def __init__(self, status, url, request):
+                self.status = status
+                self.url = url
+                self.request = request
+                request._response = self
+
+        initial_request = FakeRequest("https://fixture.test/runtime")
+        FakeResponse(302, "https://fixture.test/runtime", initial_request)
+        final_request = FakeRequest(
+            "https://fixture.test/final",
+            redirected_from=initial_request,
+        )
+        final_response = FakeResponse(
+            200,
+            "https://fixture.test/final",
+            final_request,
+        )
+
+        class FakeBody:
+            @staticmethod
+            def inner_text(timeout=None):
+                return "fixture body"
+
+        class FakePage:
+            url = "https://fixture.test/final"
+
+            @staticmethod
+            def goto(*_args, **_kwargs):
+                return final_response
+
+            @staticmethod
+            def title():
+                return "Fixture"
+
+            @staticmethod
+            def locator(_selector):
+                return FakeBody()
+
+        result = open_page_with_retry(
+            FakePage(),
+            "https://fixture.test/runtime",
+            lambda _page: None,
+            attempts=1,
+        )
+
+        self.assertEqual(
+            [
+                {
+                    "url": "https://fixture.test/runtime",
+                    "status": 302,
+                },
+                {
+                    "url": "https://fixture.test/final",
+                    "status": 200,
+                },
+            ],
+            result["redirect_chain"],
+        )
 
     def test_page_summary_coexists_with_visual_records_in_array(self):
         clear_results()

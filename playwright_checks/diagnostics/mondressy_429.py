@@ -529,7 +529,7 @@ def run_api_request_probe(playwright, host, initial_url, headers, secrets):
             )
             response_headers = {
                 str(key).lower(): str(value)
-                for key, value in response.all_headers().items()
+                for key, value in (response.headers or {}).items()
             }
             status = response.status
             response_url = response.url or current_url

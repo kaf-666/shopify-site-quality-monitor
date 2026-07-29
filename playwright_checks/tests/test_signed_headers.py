@@ -9,6 +9,7 @@ from playwright_checks.core.request_headers import (
     install_signed_request_routing,
     is_mondressy_us_signed_url,
     load_signed_request_headers,
+    mondressy_us_signed_hosts,
 )
 
 
@@ -17,7 +18,11 @@ SECRET_ENV = {
     "MONDRESSY_US_SHOPIFY_SIGNATURE_INPUT": "sentinel-input-secret",
     "MONDRESSY_US_SHOPIFY_SIGNATURE_AGENT": "sentinel-agent-secret",
 }
-SITE_CONFIG = {"site": "mondressy_US"}
+SITE_CONFIG = {
+    "site": "mondressy_US",
+    "base_url": "https://mondressy.com",
+    "signed_request_hosts": ["mondressy.com"],
+}
 
 
 class FakeRequest:
@@ -51,13 +56,13 @@ class FakeContext:
 
 
 class SignedRequestHeaderTests(unittest.TestCase):
-    def test_only_exact_mondressy_hosts_match(self):
+    def test_only_configured_mondressy_host_matches(self):
         accepted = (
             "https://mondressy.com/",
-            "https://www.mondressy.com/collections/test?x=1",
             "http://mondressy.com/path",
         )
         rejected = (
+            "https://www.mondressy.com/collections/test?x=1",
             "https://cdn.mondressy.com/file.js",
             "https://mondressy.com.evil.test/",
             "https://evil.test/?next=https://mondressy.com/",
@@ -66,10 +71,24 @@ class SignedRequestHeaderTests(unittest.TestCase):
         )
         for url in accepted:
             with self.subTest(url=url):
-                self.assertTrue(is_mondressy_us_signed_url(url))
+                self.assertTrue(
+                    is_mondressy_us_signed_url(url, SITE_CONFIG)
+                )
         for url in rejected:
             with self.subTest(url=url):
-                self.assertFalse(is_mondressy_us_signed_url(url))
+                self.assertFalse(
+                    is_mondressy_us_signed_url(url, SITE_CONFIG)
+                )
+
+    def test_signed_host_defaults_to_configured_entry_host(self):
+        config = {
+            "site": "mondressy_US",
+            "base_url": "https://mondressy.com",
+        }
+        self.assertEqual(
+            frozenset({"mondressy.com"}),
+            mondressy_us_signed_hosts(config),
+        )
 
     def test_route_merges_original_headers_and_replaces_signature_headers(self):
         context = FakeContext()
@@ -79,7 +98,8 @@ class SignedRequestHeaderTests(unittest.TestCase):
         self.assertEqual(INTERCEPTED_REQUEST_PROFILE, profile)
         self.assertIsNotNone(context.matcher)
         self.assertIsNotNone(context.handler)
-        self.assertTrue(context.matcher("https://www.mondressy.com/"))
+        self.assertTrue(context.matcher("https://mondressy.com/"))
+        self.assertFalse(context.matcher("https://www.mondressy.com/"))
         self.assertFalse(context.matcher("https://cdn.shopify.com/file.js"))
 
         route = FakeRoute(

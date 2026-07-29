@@ -1,4 +1,7 @@
 site: mondressy_US
+base_url: https://mondressy.com
+signed_request_hosts:
+  - mondressy.com
 
 browser:
   headed: false
@@ -58,7 +61,7 @@ global_screenshot_hide_selectors:
 
 pages:
   home:
-    url: https://www.mondressy.com
+    url: https://mondressy.com
     capture_global_screenshot: true
     capture_first_screen: true
     stable_banner_index: 0
@@ -109,7 +112,7 @@ pages:
           - ".js-search-header.medium-up--hide"
 
   collection:
-    url: https://www.mondressy.com/collections/wedding-guest-dresses
+    url: https://mondressy.com/collections/wedding-guest-dresses
     capture_global_screenshot: true
     capture_first_screen: true
     desktop:
@@ -136,7 +139,7 @@ pages:
       - ".grid__item.grid-product"
 
   product:
-    url: https://www.mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613
+    url: https://mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613
     capture_global_screenshot: true
     capture_first_screen: true
     desktop:

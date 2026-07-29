@@ -675,6 +675,28 @@ class RuntimePhase11PlaywrightTests(unittest.TestCase):
         self.assertEqual(1, len(page_summaries))
         self.assertEqual("warning", page_summaries[0]["overall_status"])
 
+    def test_runner_does_not_retry_terminal_main_document_error(self):
+        call_count = 0
+
+        def run_func():
+            nonlocal call_count
+            call_count += 1
+            return [
+                "Home: Playwright runtime error: "
+                "TerminalMainDocumentError: status=429"
+            ]
+
+        failures = runner.run_page(
+            "Home",
+            "home",
+            run_func,
+            "desktop",
+        )
+
+        self.assertEqual(1, call_count)
+        self.assertEqual(1, len(failures))
+        self.assertIn("TerminalMainDocumentError", failures[0])
+
     def test_report_only_and_enforced_modes_keep_status_separate_from_exit(self):
         for report_only, expected_failure_count in ((True, 0), (False, 1)):
             with self.subTest(report_only=report_only):

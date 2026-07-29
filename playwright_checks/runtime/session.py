@@ -108,6 +108,11 @@ class RuntimeHealthSession:
                 ),
             )
         )
+        self.navigation.redirect_chain = list(
+            result.get("redirect_chain")
+            or last_attempt.get("redirect_chain")
+            or self.navigation.redirect_chain
+        )
         if error is not None:
             self.navigation.error_type = type(error).__name__
             self.navigation.error_message = redact_text(str(error))
@@ -277,6 +282,14 @@ class RuntimeHealthSession:
         policy = runtime_reporting_policy(self.config)
         evidence_health = dict(health)
         evidence_health.pop("body_text", None)
+        if _is_terminal_main_document_status(self.navigation.status):
+            evidence_health["terminal_page_evidence"] = {
+                "status": self.navigation.status,
+                "final_url": self.navigation.final_url,
+                "title": health.get("title"),
+                "body_text_length": health.get("body_text_length"),
+                "dom_node_count": health.get("dom_node_count"),
+            }
         attempt_payload = {
             "timestamp": utc_timestamp(),
             "site": self.site,
@@ -468,6 +481,12 @@ class RuntimeHealthSession:
         )
         print(f"Visual Result: {summary['visual_status'].upper()}")
         print(f"Overall Result: {summary['status'].upper()}")
+
+
+def _is_terminal_main_document_status(status):
+    return status in {401, 403, 429} or (
+        isinstance(status, int) and status >= 500
+    )
 
 
 class FailOpenRuntimeHealthSession:

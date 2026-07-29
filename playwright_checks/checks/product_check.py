@@ -21,6 +21,7 @@ from playwright_checks.runtime.session import (
     finalize_runtime_health_fail_open,
     record_runtime_error_fail_open,
 )
+from playwright_checks.utils.waits import TerminalMainDocumentError
 from playwright_checks.utils.capture import (
     capture_first_screen,
     capture_global_screenshot,
@@ -672,6 +673,8 @@ def run():
                 "navigation/readiness",
             )
             if not page_model.runtime.page_available():
+                raise
+            if isinstance(navigation_error, TerminalMainDocumentError):
                 raise
             failures.append(
                 "PDP navigation/readiness error: "

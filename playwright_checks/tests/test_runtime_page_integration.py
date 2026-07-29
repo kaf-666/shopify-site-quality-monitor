@@ -9,6 +9,7 @@ from playwright_checks.checks import (
 )
 from playwright_checks.core.test_results import clear_results, get_results
 from playwright_checks.runtime.session import FailOpenRuntimeHealthSession
+from playwright_checks.utils.waits import TerminalMainDocumentError
 
 
 class FakeContext:
@@ -75,6 +76,15 @@ class SuccessfulPageModel:
     @staticmethod
     def wait_until_ready():
         return None
+
+
+class TerminalPageModel(SuccessfulPageModel):
+    @staticmethod
+    def open():
+        raise TerminalMainDocumentError(
+            429,
+            "https://fixture.test",
+        )
 
 
 class RuntimePageIntegrationTests(unittest.TestCase):
@@ -257,6 +267,74 @@ class RuntimePageIntegrationTests(unittest.TestCase):
                     and item.get("page") == page_name
                 ]
                 self.assertEqual(1, len(summaries))
+
+    def test_terminal_main_document_skips_long_page_checks(self):
+        cases = [
+            (
+                home_check,
+                "HomePage",
+                "home",
+                ("dom_check", "check_plugins", "capture_modules"),
+            ),
+            (
+                collection_check,
+                "CollectionPage",
+                "collection",
+                ("dom_check", "check_product_count", "capture_modules"),
+            ),
+            (
+                product_check,
+                "ProductPage",
+                "product",
+                ("dom_check", "check_add_to_cart", "capture_modules"),
+            ),
+        ]
+        for module, page_class_name, page_name, check_names in cases:
+            with self.subTest(page=page_name):
+                clear_results()
+                page = OpenFakePage()
+                context = FakeContext(page_name)
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        patch.object(
+                            module,
+                            "PageCheckContext",
+                            return_value=context,
+                        )
+                    )
+                    stack.enter_context(patch.object(module, "create_dirs"))
+                    stack.enter_context(
+                        patch.object(
+                            module,
+                            "init_browser",
+                            return_value=(
+                                object(),
+                                object(),
+                                object(),
+                                page,
+                            ),
+                        )
+                    )
+                    stack.enter_context(
+                        patch.object(
+                            module,
+                            page_class_name,
+                            side_effect=(
+                                lambda _page, site_config=None, name=page_name:
+                                TerminalPageModel(page, name)
+                            ),
+                        )
+                    )
+                    stack.enter_context(patch.object(module, "close_browser"))
+                    long_checks = [
+                        stack.enter_context(patch.object(module, name))
+                        for name in check_names
+                    ]
+                    failures = module.run()
+
+                self.assertTrue(failures)
+                for long_check in long_checks:
+                    long_check.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -20,38 +20,37 @@ class JenkinsfileStaticTests(unittest.TestCase):
                 f"unbalanced {opening}{closing}",
             )
 
-    def test_only_the_six_probe_diagnostic_is_invoked(self):
-        self.assertIn(
+    def test_only_mondressy_bare_host_home_gray_scope_is_invoked(self):
+        self.assertIn("target_host=mondressy.com", self.content)
+        self.assertIn("signed_request_hosts=mondressy.com", self.content)
+        self.assertIn("run_all.py", self.content)
+        self.assertIn("--site mondressy_US", self.content)
+        self.assertIn("--viewport desktop", self.content)
+        self.assertIn("--page home", self.content)
+        self.assertNotIn("--viewport mobile", self.content)
+        self.assertNotIn("--page collection", self.content)
+        self.assertNotIn("--page product", self.content)
+        self.assertNotIn(
             "-m playwright_checks.diagnostics.mondressy_429",
             self.content,
         )
-        self.assertIn("probe_order=curl,APIRequest,Chromium", self.content)
-        self.assertIn(
-            "hosts=mondressy.com,www.mondressy.com",
-            self.content,
-        )
-        self.assertNotIn("run_all.py", self.content)
-        self.assertNotIn("gray_summary", self.content)
 
-    def test_runtime_gate_and_side_effect_controls_are_explicit(self):
+    def test_runtime_and_side_effect_controls_are_explicit(self):
         expected = (
             "RUNTIME_HEALTH_REPORT_ONLY = 'true'",
             "RUNTIME_HEALTH_AFFECT_EXIT_CODE = 'false'",
             "ALLOW_BASELINE_INIT = 'false'",
             "FORCE_BASELINE_INIT = 'false'",
             "ALLOW_SIDE_EFFECT_FLOW = 'false'",
+            "baseline_init=false",
+            "side_effect_flows=false",
         )
         for item in expected:
             self.assertIn(item, self.content)
 
-    def test_visual_and_side_effect_work_are_explicitly_disabled(self):
-        self.assertIn("visual_checks=false", self.content)
-        self.assertIn("side_effect_flows=false", self.content)
         forbidden = (
-            "--page home",
-            "--page collection",
-            "--page product",
             "add_to_cart_flow",
+            "checkout_flow",
         )
         for item in forbidden:
             self.assertNotIn(item, self.content.lower())
@@ -76,15 +75,41 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertIn("-m playwright install chromium", self.content)
         self.assertIn("p.chromium.launch(headless=True)", self.content)
 
-    def test_archive_is_non_blocking_in_post_always(self):
-        post_index = self.content.index("post {")
-        always_index = self.content.index("always {", post_index)
-        archive_index = self.content.index("archiveArtifacts(", always_index)
-        catch_index = self.content.index("catch (archiveError)", archive_index)
-        self.assertLess(post_index, always_index)
-        self.assertLess(always_index, archive_index)
-        self.assertLess(archive_index, catch_index)
-        self.assertIn("allowEmptyArchive: true", self.content)
+    def test_nonzero_run_continues_through_summary_archive_and_evaluation(self):
+        run_index = self.content.index(
+            "stage('Run Mondressy US Runtime Gray Validation')"
+        )
+        summary_index = self.content.index(
+            "stage('Print Runtime Summary')"
+        )
+        archive_index = self.content.index("stage('Archive Artifacts')")
+        evaluate_index = self.content.index("stage('Evaluate Result')")
+        self.assertLess(run_index, summary_index)
+        self.assertLess(summary_index, archive_index)
+        self.assertLess(archive_index, evaluate_index)
+
+        run_stage = self.content[run_index:summary_index]
+        summary_stage = self.content[summary_index:archive_index]
+        archive_stage = self.content[archive_index:evaluate_index]
+        self.assertIn("returnStatus: true", run_stage)
+        self.assertIn("returnStatus: true", summary_stage)
+        self.assertIn("archiveArtifacts(", archive_stage)
+        self.assertIn("allowEmptyArchive: true", archive_stage)
+        self.assertIn("catch (archiveError)", archive_stage)
+
+    def test_monitor_command_is_inside_with_credentials(self):
+        run_index = self.content.index(
+            "stage('Run Mondressy US Runtime Gray Validation')"
+        )
+        summary_index = self.content.index(
+            "stage('Print Runtime Summary')"
+        )
+        run_stage = self.content[run_index:summary_index]
+        credentials_index = run_stage.index("withCredentials([")
+        command_index = run_stage.index("run_all.py")
+        credentials_close_index = run_stage.rindex("}\n")
+        self.assertLess(credentials_index, command_index)
+        self.assertLess(command_index, credentials_close_index)
 
     def test_credentials_are_bound_without_environment_dump_commands(self):
         for name in (
@@ -105,12 +130,12 @@ class JenkinsfileStaticTests(unittest.TestCase):
         for command in forbidden_dump_commands:
             self.assertNotIn(command, self.content)
 
-    def test_diagnostic_uses_extra_headers_and_no_route_injection(self):
-        self.assertIn(
+    def test_production_header_injection_remains_route_based(self):
+        self.assertIn("request_header_injection=route", self.content)
+        self.assertNotIn(
             "request_header_injection=extra_http_headers",
             self.content,
         )
-        self.assertIn("chromium_route_injection=false", self.content)
 
     def test_dynamic_environment_access_is_forbidden(self):
         self.assertNotIn("env[", self.content)

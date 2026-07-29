@@ -8,7 +8,7 @@ pipeline {
     }
 
     environment {
-        DIAGNOSTIC_RUN_ID = "jenkins-${BUILD_NUMBER}-mondressy-429-diagnostic"
+        VISUAL_RUN_ID = "jenkins-${BUILD_NUMBER}-mondressy-us-runtime-gray"
         PLAYWRIGHT_BROWSER_CHANNEL = 'chromium'
         RUNTIME_HEALTH_ENABLED = 'true'
         RUNTIME_HEALTH_REPORT_ONLY = 'true'
@@ -17,7 +17,8 @@ pipeline {
         ALLOW_BASELINE_INIT = 'false'
         FORCE_BASELINE_INIT = 'false'
         ALLOW_SIDE_EFFECT_FLOW = 'false'
-        DIAGNOSTIC_EXIT_CODE = 'not_run'
+        GRAY_PYTHON_EXIT_CODE = 'not_run'
+        GRAY_SUMMARY_EXIT_CODE = 'not_run'
     }
 
     stages {
@@ -35,7 +36,7 @@ pipeline {
                     )
                     if (manualCauses.isEmpty()) {
                         error(
-                            'This diagnostic only permits a manual ' +
+                            'This gray validation only permits a manual ' +
                             'Jenkins user trigger.'
                         )
                     }
@@ -80,12 +81,17 @@ pipeline {
                         }
                     }
 
-                    echo 'diagnostic_scope=mondressy_429_six_probes'
-                    echo 'probe_order=curl,APIRequest,Chromium'
-                    echo 'hosts=mondressy.com,www.mondressy.com'
-                    echo 'request_header_injection=extra_http_headers'
-                    echo 'chromium_route_injection=false'
-                    echo 'visual_checks=false'
+                    echo 'site_key=mondressy_US'
+                    echo 'target_host=mondressy.com'
+                    echo 'page=Home'
+                    echo 'viewport=desktop'
+                    echo 'report_only=true'
+                    echo 'runtime_exit_gate=false'
+                    echo 'request_header_injection=route'
+                    echo 'signed_request_hosts=mondressy.com'
+                    echo 'http_cache_mode=disabled_by_routing'
+                    echo 'run_profile=intercepted_cold_context'
+                    echo 'baseline_init=false'
                     echo 'side_effect_flows=false'
                 }
             }
@@ -113,7 +119,7 @@ pipeline {
             }
         }
 
-        stage('Run Mondressy 429 Six-Probe Diagnostic') {
+        stage('Run Mondressy US Runtime Gray Validation') {
             steps {
                 withCredentials([
                     string(
@@ -135,36 +141,86 @@ pipeline {
                             exitCode = sh(
                                 returnStatus: true,
                                 script: '''
-                                    .venv/bin/python -u \
-                                        -m playwright_checks.diagnostics.mondressy_429 \
-                                        --output "artifacts/$DIAGNOSTIC_RUN_ID/mondressy-429-diagnostic.json"
+                                    .venv/bin/python -u run_all.py \
+                                        --site mondressy_US \
+                                        --viewport desktop \
+                                        --page home
                                 '''
                             )
                         } else {
                             exitCode = bat(
                                 returnStatus: true,
                                 script: '''
-                                    @.venv\\Scripts\\python.exe -u -m playwright_checks.diagnostics.mondressy_429 --output "artifacts\\%DIAGNOSTIC_RUN_ID%\\mondressy-429-diagnostic.json"
+                                    @.venv\\Scripts\\python.exe -u run_all.py --site mondressy_US --viewport desktop --page home
                                 '''
                             )
                         }
-                        env.DIAGNOSTIC_EXIT_CODE = "${exitCode}"
+                        env.GRAY_PYTHON_EXIT_CODE = "${exitCode}"
                     }
                 }
             }
         }
 
-        stage('Evaluate Diagnostic Execution') {
+        stage('Print Runtime Summary') {
             steps {
                 script {
-                    if (env.DIAGNOSTIC_EXIT_CODE == 'not_run') {
-                        error('Mondressy 429 diagnostic process did not run.')
-                    }
-                    if (env.DIAGNOSTIC_EXIT_CODE != '0') {
-                        error(
-                            'Mondressy 429 diagnostic execution failed: ' +
-                            env.DIAGNOSTIC_EXIT_CODE
+                    int summaryExitCode
+                    if (isUnix()) {
+                        summaryExitCode = sh(
+                            returnStatus: true,
+                            script: '''
+                                .venv/bin/python -u \
+                                    -m playwright_checks.runtime.gray_summary \
+                                    --run-id "$VISUAL_RUN_ID" \
+                                    --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
+                            '''
                         )
+                    } else {
+                        summaryExitCode = bat(
+                            returnStatus: true,
+                            script: '''
+                                @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
+                            '''
+                        )
+                    }
+                    env.GRAY_SUMMARY_EXIT_CODE = "${summaryExitCode}"
+                }
+            }
+        }
+
+        stage('Archive Artifacts') {
+            steps {
+                script {
+                    try {
+                        archiveArtifacts(
+                            artifacts: "artifacts/${env.VISUAL_RUN_ID}/**,reports/visual-results.json",
+                            allowEmptyArchive: true,
+                            fingerprint: true
+                        )
+                    } catch (archiveError) {
+                        echo(
+                            'Gray evidence archive encountered an error; ' +
+                            'result evaluation will still continue.'
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Evaluate Result') {
+            steps {
+                script {
+                    if (env.GRAY_PYTHON_EXIT_CODE == 'not_run') {
+                        error('Gray validation Python process did not run.')
+                    }
+                    if (env.GRAY_PYTHON_EXIT_CODE != '0') {
+                        error(
+                            'Gray validation Python exit code: ' +
+                            env.GRAY_PYTHON_EXIT_CODE
+                        )
+                    }
+                    if (env.GRAY_SUMMARY_EXIT_CODE != '0') {
+                        error('Runtime gray summary validation failed.')
                     }
                 }
             }
@@ -172,31 +228,14 @@ pipeline {
     }
 
     post {
-        always {
-            script {
-                try {
-                    archiveArtifacts(
-                        artifacts: "artifacts/${env.DIAGNOSTIC_RUN_ID}/**",
-                        allowEmptyArchive: true,
-                        fingerprint: true
-                    )
-                } catch (archiveError) {
-                    echo(
-                        'Diagnostic artifact archive encountered an error; ' +
-                        'the primary build result is preserved.'
-                    )
-                }
-            }
-        }
-
         success {
-            echo 'Mondressy 429 six-probe diagnostic completed.'
+            echo 'Mondressy US Runtime gray validation succeeded.'
         }
 
         failure {
             echo(
-                'Mondressy 429 diagnostic did not complete cleanly. ' +
-                'Review the redacted probe output and archived report.'
+                'Mondressy US Runtime gray validation failed. ' +
+                'Review the primary error and archived evidence.'
             )
         }
     }

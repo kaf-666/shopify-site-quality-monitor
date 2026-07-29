@@ -25,6 +25,7 @@ class NavigationAttempt:
     final_url: str | None = None
     status: int | None = None
     redirected: bool = False
+    redirect_chain: list[dict] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None
     timestamp: str = field(default_factory=utc_timestamp)
@@ -43,6 +44,7 @@ class NavigationResult:
     final_url: str | None = None
     status: int | None = None
     redirected: bool = False
+    redirect_chain: list[dict] = field(default_factory=list)
     attempts: list[dict] = field(default_factory=list)
     error_type: str | None = None
     error_message: str | None = None

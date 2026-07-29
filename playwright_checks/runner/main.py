@@ -29,6 +29,12 @@ def with_viewport(failures, viewport_name):
 
 
 def should_retry_page(failures):
+    if any(
+        "TerminalMainDocumentError" in failure
+        for failure in failures
+    ):
+        return False
+
     retry_patterns = (
         "Timeout",
         "capture failed",
