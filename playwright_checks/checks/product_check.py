@@ -1,12 +1,12 @@
 import os
 import sys
-import tempfile
 import time
 
 import numpy as np
 from PIL import Image
 
 from playwright_checks.checks.context import PageCheckContext
+from playwright_checks.artifacts.screenshot_manager import safe_move
 from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import (
     add_result,
@@ -267,9 +267,9 @@ def capture_add_to_cart(ctx, page_model, attempts=3):
     last_error = None
 
     for attempt in range(1, attempts + 1):
-        probe_path = os.path.join(
-            tempfile.gettempdir(),
-            f"add_to_cart_probe_{time.time_ns()}.png"
+        probe_path = ctx.temporary_path(
+            name,
+            f"add-to-cart-probe-{attempt}",
         )
 
         try:
@@ -286,12 +286,15 @@ def capture_add_to_cart(ctx, page_model, attempts=3):
             )
 
             target = locate_ready_add_to_cart(page_model, timeout=5000)
-            target.screenshot(path=probe_path)
+            ctx.artifact_manager.capture_element(
+                target,
+                probe_path,
+            )
 
             if not image_has_visible_pixels(probe_path):
                 raise Exception("Add To Cart screenshot is blank")
 
-            os.replace(probe_path, paths["current"])
+            safe_move(probe_path, paths["current"])
             paths["capture_duration_ms"] = round(
                 (time.perf_counter() - capture_start) * 1000,
                 2
@@ -307,8 +310,7 @@ def capture_add_to_cart(ctx, page_model, attempts=3):
 
         except Exception as e:
             last_error = e
-            if os.path.exists(probe_path):
-                os.remove(probe_path)
+            ctx.artifact_manager.discard_temporary(probe_path)
 
             if attempt < attempts:
                 print(
@@ -477,17 +479,20 @@ def capture_gallery_variant(
     )
 
     target = gallery_capture_target(page_model)
-    probe_path = os.path.join(
-        tempfile.gettempdir(),
-        f"variant_probe_{time.time_ns()}.png"
+    probe_path = ctx.temporary_path(
+        name,
+        f"variant-probe-{candidate_index}",
     )
-    target.screenshot(path=probe_path)
+    ctx.artifact_manager.capture_element(
+        target,
+        probe_path,
+    )
 
     if any(image_paths_close(path, probe_path) for path in captured_paths):
-        os.remove(probe_path)
+        ctx.artifact_manager.discard_temporary(probe_path)
         raise Exception(f"{variant_source} {candidate_index} duplicated screenshot")
 
-    os.replace(probe_path, paths["current"])
+    safe_move(probe_path, paths["current"])
     captured_paths.append(paths["current"])
     paths["capture_duration_ms"] = round(
         (time.perf_counter() - capture_start) * 1000,
@@ -653,6 +658,15 @@ def test_variants(ctx, page_model):
     return results, failures
 
 
+def monitoring_product_is_unavailable(page_model, page_config):
+    monitoring = (page_config or {}).get("monitoring_product") or {}
+    if not monitoring.get("stable"):
+        return False
+    navigation = getattr(page_model.runtime, "navigation", None)
+    status = getattr(navigation, "status", None)
+    return status in (404, 410)
+
+
 def run():
     ctx = PageCheckContext(PAGE, suite=SUITE)
     failures = []
@@ -682,6 +696,29 @@ def run():
             )
 
         collect_runtime_health_fail_open(page_model.runtime)
+
+        if monitoring_product_is_unavailable(
+            page_model,
+            ctx.page_config,
+        ):
+            error = "monitoring_product_unavailable"
+            failures.append(error)
+            add_result(
+                build_result(
+                    ctx.site,
+                    ctx.suite,
+                    ctx.page_name,
+                    "monitoring_product",
+                    "failed",
+                    None,
+                    error=error,
+                    details={
+                        "structural_status": "failed",
+                        "affects_exit_code": True,
+                    },
+                )
+            )
+            return failures
 
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
@@ -717,6 +754,11 @@ def run():
                     site_config=ctx.site_config,
                     page_config=ctx.page_config,
                     legacy_baseline_dir=ctx.legacy_baseline_dir,
+                    artifact_manager=getattr(
+                        ctx,
+                        "artifact_manager",
+                        None,
+                    ),
                 )
             )
 
@@ -732,6 +774,7 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
         failures.extend(
@@ -740,10 +783,27 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
-        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
-        failures.extend(process_results(variant_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(
+            process_results(
+                module_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
+        failures.extend(
+            process_results(
+                variant_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
 
     except Exception as e:
         if page_model is not None:
@@ -769,6 +829,9 @@ def run():
                     get_current_viewport_name(),
                 )
             )
+        artifact_manager = getattr(ctx, "artifact_manager", None)
+        if artifact_manager is not None:
+            artifact_manager.finalize_page(bool(failures))
         close_browser(playwright, browser, context)
 
     return failures

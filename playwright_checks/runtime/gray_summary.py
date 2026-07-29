@@ -78,6 +78,8 @@ def summarize(run_id, python_exit_code, project_root=PROJECT_ROOT):
         else 0
     )
     visual_failure_count = _visual_failure_count(results)
+    content_changed_count = _content_changed_count(results)
+    visual_result = page_summary.get("visual_status", "not_run")
     execution_error_count = _execution_error_count(
         results,
         attempt,
@@ -109,6 +111,8 @@ def summarize(run_id, python_exit_code, project_root=PROJECT_ROOT):
         "runtime_findings_count": len(findings),
         "runtime_gated_failure_count": runtime_gated_failure_count,
         "visual_failure_count": visual_failure_count,
+        "content_changed_count": content_changed_count,
+        "visual_result": visual_result,
         "execution_error_count": execution_error_count,
         "runtime_exit_gate": runtime_exit_gate,
         "console_event_count": _event_count(events, {"console"}),
@@ -136,6 +140,8 @@ def print_summary(summary):
         "runtime_findings_count",
         "runtime_gated_failure_count",
         "visual_failure_count",
+        "content_changed_count",
+        "visual_result",
         "execution_error_count",
         "runtime_exit_gate",
         "console_event_count",
@@ -150,7 +156,7 @@ def print_summary(summary):
         "jenkins_result",
     )
     for key in ordered_keys:
-        print(f"{key}={_display_value(summary[key])}")
+        print(f"{key}={_display_value(summary.get(key, 0))}")
 
 
 def main(argv=None):
@@ -235,6 +241,16 @@ def _visual_failure_count(results):
         if result.get("result_type", "visual") == "visual"
         and result.get("case") != "runtime"
         and result.get("status") in failure_statuses
+    )
+
+
+def _content_changed_count(results):
+    return sum(
+        1
+        for result in results
+        if result.get("result_type", "visual") == "visual"
+        and result.get("case") != "runtime"
+        and result.get("status") == "content_changed"
     )
 
 

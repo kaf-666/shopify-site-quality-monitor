@@ -105,6 +105,44 @@ pages:
       currency:
         - xpath
         - "//*[@id='wssccSelected']"
+    dynamic_regions:
+      - name: collections
+        module: collections
+        strategy: mask_content
+        item_selector: ".grid__item.grid-product"
+        masks:
+          - "img"
+          - ".grid-product__title"
+          - ".grid-product__price"
+          - ".grid-product__tag"
+      - name: collections_1
+        module: collections_1
+        strategy: mask_content
+        item_selector: ".grid__item.grid-product"
+        masks:
+          - "img"
+          - ".grid-product__title"
+          - ".grid-product__price"
+          - ".grid-product__tag"
+    layout_checks:
+      collections:
+        minimum_count: 1
+        check_overlap: true
+        check_uniform_width: true
+        check_image_visible: true
+        minimum_image_success_rate: 0.9
+        check_horizontal_overflow: true
+        check_title_present: true
+        check_price_present: true
+      collections_1:
+        minimum_count: 1
+        check_overlap: true
+        check_uniform_width: true
+        check_image_visible: true
+        minimum_image_success_rate: 0.9
+        check_horizontal_overflow: true
+        check_title_present: true
+        check_price_present: true
     mobile:
       modules:
         search_btn:
@@ -137,6 +175,30 @@ pages:
     product_card:
       - css
       - ".grid__item.grid-product"
+    dynamic_regions:
+      - name: product_grid
+        module: product_grid
+        strategy: layout_only
+        item_selector: ".grid__item.grid-product"
+    layout_checks:
+      product_grid:
+        minimum_count: 1
+        check_overlap: true
+        check_uniform_width: true
+        check_reasonable_height: true
+        check_image_visible: true
+        minimum_image_success_rate: 0.9
+        check_horizontal_overflow: true
+        check_title_present: true
+        check_price_present: true
+    content_change:
+      allowed:
+        - product_count
+        - product_order
+        - product_title
+        - product_price
+        - product_image
+        - availability
 
   product:
     url: https://mondressy.com/products/a-line-princess-sleeveless-tea-length-wedding-guest-dresses-mon2311613
@@ -151,6 +213,8 @@ pages:
     expected_keywords:
       - dress
     require_reviews: false
+    monitoring_product:
+      stable: true
     modules:
       gallery:
         - xpath
@@ -161,6 +225,16 @@ pages:
       add_to_cart:
         - xpath
         - "//button[@name='add']"
+    dynamic_regions:
+      - name: info
+        module: info
+        strategy: mask_content
+        masks:
+          - ".product-single__title"
+          - ".product__price"
+          - ".product__inventory"
+          - "[class*='review']"
+          - "[class*='countdown']"
     variant_inputs:
       - xpath
       - "//*[contains(@class,'variant')]//input"

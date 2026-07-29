@@ -124,6 +124,72 @@ def validate_module_selectors(errors, page_name, page_config):
         validate_selector(errors, f"pages.{page_name}.modules.{module_name}", selector)
 
 
+def validate_dynamic_regions(errors, page_name, page_config):
+    regions = page_config.get("dynamic_regions")
+    if regions is None:
+        return
+    if not isinstance(regions, list):
+        errors.append(f"pages.{page_name}.dynamic_regions must be a list")
+        return
+    modules = page_config.get("modules", {})
+    seen = set()
+    for index, region in enumerate(regions):
+        path = f"pages.{page_name}.dynamic_regions[{index}]"
+        if not isinstance(region, dict):
+            errors.append(f"{path} must be a mapping")
+            continue
+        name = region.get("name")
+        if not isinstance(name, str) or not name.strip():
+            errors.append(f"{path}.name must be a non-empty string")
+        elif name in seen:
+            errors.append(f"{path}.name must be unique")
+        else:
+            seen.add(name)
+        strategy = region.get("strategy")
+        if strategy not in (
+            "mask_content",
+            "layout_only",
+            "ignore_visual",
+        ):
+            errors.append(
+                f"{path}.strategy must be mask_content, layout_only, "
+                "or ignore_visual"
+            )
+        module = region.get("module")
+        selector = region.get("selector")
+        if module is not None and module not in modules:
+            errors.append(f"{path}.module references unknown module")
+        if module is None and not (
+            isinstance(selector, str) and selector.strip()
+        ):
+            errors.append(f"{path} requires module or CSS selector")
+        if "item_selector" in region and not (
+            isinstance(region["item_selector"], str)
+            and region["item_selector"].strip()
+        ):
+            errors.append(f"{path}.item_selector must be CSS text")
+        masks = region.get("masks")
+        if masks is not None and (
+            not isinstance(masks, list)
+            or not all(
+                isinstance(item, str) and item.strip()
+                for item in masks
+            )
+        ):
+            errors.append(f"{path}.masks must be CSS text values")
+
+
+def validate_artifact_settings(errors):
+    from playwright_checks.artifacts.retention import (
+        screenshot_retention_config,
+    )
+
+    try:
+        screenshot_retention_config()
+    except (TypeError, ValueError) as error:
+        errors.append(f"artifacts.screenshot_retention: {error}")
+
+
 def validate_runtime_health(errors, path, value, warnings=None):
     warnings = warnings if warnings is not None else []
     if value is None:
@@ -329,6 +395,7 @@ def validate_settings(errors, warnings):
     from playwright_checks.core.config_loader import load_settings
 
     settings = load_settings()
+    validate_artifact_settings(errors)
     validate_runtime_health(
         errors,
         "configs/settings.yaml runtime_health",
@@ -442,6 +509,7 @@ def validate_config(args):
         if not is_valid_url(page_config.get("url")):
             errors.append(f"pages.{page_name}.url is missing or invalid")
         validate_module_selectors(errors, page_name, page_config)
+        validate_dynamic_regions(errors, page_name, page_config)
         raw_page_config = pages[page_name]
         validate_runtime_health(
             errors,

@@ -44,6 +44,8 @@ class JenkinsfileStaticTests(unittest.TestCase):
             "ALLOW_SIDE_EFFECT_FLOW = 'false'",
             "baseline_init=false",
             "side_effect_flows=false",
+            "SCREENSHOT_RETENTION_MODE = 'evidence_only'",
+            "VISUAL_STRICT_WARNINGS = 'false'",
         )
         for item in expected:
             self.assertIn(item, self.content)
@@ -96,6 +98,47 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertIn("archiveArtifacts(", archive_stage)
         self.assertIn("allowEmptyArchive: true", archive_stage)
         self.assertIn("catch (archiveError)", archive_stage)
+
+    def test_artifact_retention_and_archive_scope_are_bounded(self):
+        self.assertIn("buildDiscarder(", self.content)
+        for value in (
+            "daysToKeepStr: '14'",
+            "numToKeepStr: '20'",
+            "artifactDaysToKeepStr: '7'",
+            "artifactNumToKeepStr: '10'",
+        ):
+            self.assertIn(value, self.content)
+        self.assertIn("artifact-summary.json", self.content)
+        self.assertIn("artifact-manifest.json", self.content)
+        self.assertIn("runtime/*.json", self.content)
+        self.assertIn("current/*.png", self.content)
+        self.assertIn("diff/*.png", self.content)
+        self.assertIn("excludes:", self.content)
+        for forbidden in (
+            "**/.tmp/**",
+            "**/baselines/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
+        ):
+            self.assertIn(forbidden, self.content)
+        self.assertNotIn(
+            'artifacts: "artifacts/${env.VISUAL_RUN_ID}/**',
+            self.content,
+        )
+
+    def test_python_exit_code_is_converted_without_env_shadowing(self):
+        self.assertIn("def pythonExitCode = sh(", self.content)
+        self.assertIn("def pythonExitCode = bat(", self.content)
+        self.assertIn("pythonExitCode.toString()", self.content)
+        self.assertNotIn("int GRAY_PYTHON_EXIT_CODE", self.content)
+        self.assertLess(
+            self.content.index("stage('Print Runtime Summary')"),
+            self.content.index("stage('Archive Artifacts')"),
+        )
+        self.assertLess(
+            self.content.index("stage('Archive Artifacts')"),
+            self.content.index("stage('Evaluate Result')"),
+        )
 
     def test_monitor_command_is_inside_with_credentials(self):
         run_index = self.content.index(

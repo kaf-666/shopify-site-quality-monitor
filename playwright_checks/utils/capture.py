@@ -5,6 +5,11 @@ from PIL import Image, ImageChops
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from playwright_checks.artifacts.dynamic import (
+    audit_dynamic_region,
+    audit_page_dynamic_masks,
+    dynamic_region_for_case,
+)
 from playwright_checks.utils.dom import hide_dynamic_elements
 from playwright_checks.utils.waits import build_paths, locate_element
 
@@ -755,7 +760,18 @@ def capture_global_screenshot(ctx, page, before_capture=None):
             site_config=ctx.site_config,
             page_config=ctx.page_config,
         )
-        page.screenshot(path=paths["current"], full_page=True)
+        paths.update(
+            audit_page_dynamic_masks(
+                page,
+                ctx.page_config,
+                full_page=True,
+            )
+        )
+        ctx.artifact_manager.capture_page(
+            page,
+            paths["current"],
+            full_page=True,
+        )
         if target_height:
             normalize_image_height(paths["current"], target_height)
         with Image.open(paths["current"]) as captured_image:
@@ -827,7 +843,18 @@ def capture_first_screen(ctx, page, before_capture=None):
             settle_delay=ctx.page_config.get("first_screen_settle_delay", 0.5),
             before_capture=before_capture,
         )
-        page.screenshot(path=paths["current"], full_page=False)
+        paths.update(
+            audit_page_dynamic_masks(
+                page,
+                ctx.page_config,
+                full_page=False,
+            )
+        )
+        ctx.artifact_manager.capture_page(
+            page,
+            paths["current"],
+            full_page=False,
+        )
         crop_box = first_screen_crop_box(ctx.page_config, page)
         paths["cropped_first_screen"] = crop_image(paths["current"], crop_box)
 
@@ -867,7 +894,14 @@ def capture_first_screen(ctx, page, before_capture=None):
         }
 
 
-def screenshot_element_with_retry(locate, output_path, prepare=None, attempts=3, delay=1):
+def screenshot_element_with_retry(
+    locate,
+    output_path,
+    prepare=None,
+    attempts=3,
+    delay=1,
+    artifact_manager=None,
+):
     start = time.perf_counter()
     last_error = None
 
@@ -879,7 +913,13 @@ def screenshot_element_with_retry(locate, output_path, prepare=None, attempts=3,
                 prepare(element)
 
             element = locate()
-            element.screenshot(path=output_path)
+            if artifact_manager is not None:
+                artifact_manager.capture_element(
+                    element,
+                    output_path,
+                )
+            else:
+                element.screenshot(path=output_path)
 
             return {
                 "capture_duration_ms": round(
@@ -919,7 +959,8 @@ def capture_modules(
     site_config=None,
     page_config=None,
     before_capture=None,
-    legacy_baseline_dir=None
+    legacy_baseline_dir=None,
+    artifact_manager=None,
 ):
     print("\nModule screenshots")
     results = {}
@@ -958,9 +999,22 @@ def capture_modules(
                 paths["current"],
                 prepare=prepare,
                 attempts=3,
-                delay=1
+                delay=1,
+                artifact_manager=artifact_manager,
             )
             paths.update(metrics)
+            dynamic_region = dynamic_region_for_case(
+                page_config,
+                name,
+            )
+            if dynamic_region:
+                paths.update(
+                    audit_dynamic_region(
+                        locate(),
+                        dynamic_region,
+                        page_config=page_config,
+                    )
+                )
             results[name] = paths
 
             print(

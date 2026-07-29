@@ -1,6 +1,8 @@
 import os
 import sys
 import time
+import uuid
+from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -366,10 +368,28 @@ def build_paths(current_dir, baseline_dir, diff_dir, name, legacy_baseline_dir=N
     ):
         active_baseline = legacy_baseline
 
+    attempt = _attempt_from_path(current_dir)
+    token = uuid.uuid4().hex
     return {
-        "current": os.path.join(current_dir, f"{name}.png"),
+        "attempt": attempt,
+        "current": os.path.join(
+            current_dir,
+            f"{name}-attempt-{attempt}-{token}.png",
+        ),
         "baseline": active_baseline,
         "target_baseline": baseline,
         "legacy_baseline": legacy_baseline,
-        "diff": os.path.join(diff_dir, f"{name}.png"),
+        "diff": os.path.join(
+            diff_dir,
+            f"{name}-attempt-{attempt}-{token}-diff.png",
+        ),
     }
+
+
+def _attempt_from_path(value):
+    for part in reversed(Path(value).parts):
+        if part.startswith("attempt-"):
+            suffix = part.removeprefix("attempt-")
+            if suffix.isdigit():
+                return int(suffix)
+    return 1

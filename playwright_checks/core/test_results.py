@@ -38,6 +38,8 @@ def get_page_visual_status(site, viewport, page):
         return "failed"
     if "warning" in statuses:
         return "warning"
+    if "content_changed" in statuses:
+        return "content_changed"
     if statuses and all(status == "initialized" for status in statuses):
         return "initialized"
     return "passed"
@@ -91,4 +93,15 @@ def write_results(path=None):
         with artifact_path.open("w", encoding="utf-8") as file:
             json.dump(_RESULTS, file, ensure_ascii=False, indent=2)
 
+    from playwright_checks.artifacts.screenshot_manager import (
+        finalize_artifact_run,
+    )
+
+    finalize_artifact_run(
+        has_failure=any(
+            result.get("status") == "failed"
+            and result.get("affects_exit_code", True)
+            for result in _RESULTS
+        )
+    )
     return str(output_path)

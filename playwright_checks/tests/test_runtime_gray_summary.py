@@ -209,6 +209,92 @@ class RuntimeGraySummaryTests(unittest.TestCase):
         self.assertTrue(summary["_summary_valid"])
         self.assertEqual("FAILURE", summary["jenkins_result"])
 
+    def test_content_changed_is_reported_without_blocking_gray_result(self):
+        attempt = {
+            "site": "mondressy_US",
+            "page": "home",
+            "viewport": "desktop",
+            "runtime_status": "passed",
+            "runtime_affects_exit_code": False,
+            "findings": [],
+            "events": [],
+            "request_header_injection": "route",
+            "http_cache_mode": "disabled_by_routing",
+            "run_profile": "intercepted_cold_context",
+        }
+        results = [
+            {
+                "result_type": "visual",
+                "site": "mondressy_US",
+                "viewport": "desktop",
+                "page": "home",
+                "case": "collections",
+                "status": "content_changed",
+                "affects_exit_code": False,
+            },
+            {
+                "result_type": "page_summary",
+                "site": "mondressy_US",
+                "viewport": "desktop",
+                "page": "home",
+                "visual_status": "content_changed",
+                "runtime_status": "passed",
+                "runtime_exit_status": "passed",
+                "runtime_affects_exit_code": False,
+                "findings": [],
+            },
+        ]
+        self.write_evidence(attempt, results)
+
+        with patch.dict(
+            os.environ,
+            {"VISUAL_STRICT_WARNINGS": "false"},
+            clear=True,
+        ):
+            summary = summarize(RUN_ID, 0, self.root)
+
+        self.assertEqual(1, summary["content_changed_count"])
+        self.assertEqual("content_changed", summary["visual_result"])
+        self.assertEqual(0, summary["visual_failure_count"])
+        self.assertEqual("SUCCESS", summary["jenkins_result"])
+
+    def test_python_exit_codes_zero_one_and_two_are_preserved(self):
+        attempt = {
+            "site": "mondressy_US",
+            "page": "home",
+            "viewport": "desktop",
+            "runtime_affects_exit_code": False,
+            "findings": [],
+            "events": [],
+            "request_header_injection": "route",
+            "http_cache_mode": "disabled_by_routing",
+            "run_profile": "intercepted_cold_context",
+        }
+        self.write_evidence(
+            attempt,
+            [
+                {
+                    "result_type": "page_summary",
+                    "site": "mondressy_US",
+                    "viewport": "desktop",
+                    "page": "home",
+                    "visual_status": "passed",
+                    "runtime_affects_exit_code": False,
+                    "findings": [],
+                }
+            ],
+        )
+
+        for exit_code, expected in (
+            (0, "SUCCESS"),
+            (1, "FAILURE"),
+            (2, "FAILURE"),
+        ):
+            with self.subTest(exit_code=exit_code):
+                summary = summarize(RUN_ID, exit_code, self.root)
+                self.assertEqual(exit_code, summary["python_exit_code"])
+                self.assertEqual(expected, summary["jenkins_result"])
+
     def test_printed_summary_contains_required_gray_fields(self):
         summary = {
             "site_key": "mondressy_US",
@@ -218,6 +304,8 @@ class RuntimeGraySummaryTests(unittest.TestCase):
             "runtime_findings_count": 2,
             "runtime_gated_failure_count": 0,
             "visual_failure_count": 0,
+            "content_changed_count": 0,
+            "visual_result": "passed",
             "execution_error_count": 0,
             "runtime_exit_gate": False,
             "console_event_count": 1,
@@ -240,6 +328,8 @@ class RuntimeGraySummaryTests(unittest.TestCase):
             "runtime_findings_count",
             "runtime_gated_failure_count",
             "visual_failure_count",
+            "content_changed_count",
+            "visual_result",
             "execution_error_count",
             "runtime_exit_gate",
             "python_exit_code",

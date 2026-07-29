@@ -2,6 +2,14 @@ pipeline {
     agent any
 
     options {
+        buildDiscarder(
+            logRotator(
+                daysToKeepStr: '14',
+                numToKeepStr: '20',
+                artifactDaysToKeepStr: '7',
+                artifactNumToKeepStr: '10'
+            )
+        )
         timestamps()
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
@@ -13,7 +21,8 @@ pipeline {
         RUNTIME_HEALTH_ENABLED = 'true'
         RUNTIME_HEALTH_REPORT_ONLY = 'true'
         RUNTIME_HEALTH_AFFECT_EXIT_CODE = 'false'
-        VISUAL_STRICT_WARNINGS = 'true'
+        VISUAL_STRICT_WARNINGS = 'false'
+        SCREENSHOT_RETENTION_MODE = 'evidence_only'
         ALLOW_BASELINE_INIT = 'false'
         FORCE_BASELINE_INIT = 'false'
         ALLOW_SIDE_EFFECT_FLOW = 'false'
@@ -93,6 +102,8 @@ pipeline {
                     echo 'run_profile=intercepted_cold_context'
                     echo 'baseline_init=false'
                     echo 'side_effect_flows=false'
+                    echo 'screenshot_retention_mode=evidence_only'
+                    echo 'visual_strict_warnings=false'
                 }
             }
         }
@@ -119,6 +130,29 @@ pipeline {
             }
         }
 
+        stage('Clean Old Workspace Artifact Runs') {
+            steps {
+                script {
+                    if (isUnix()) {
+                        sh(
+                            script: '''
+                                .venv/bin/python -u \
+                                    -m playwright_checks.artifacts.cleanup \
+                                    --keep-run "$VISUAL_RUN_ID" \
+                                    --run-pattern "jenkins-*-mondressy-us-runtime-gray"
+                            '''
+                        )
+                    } else {
+                        bat(
+                            script: '''
+                                @.venv\\Scripts\\python.exe -u -m playwright_checks.artifacts.cleanup --keep-run "%VISUAL_RUN_ID%" --run-pattern "jenkins-*-mondressy-us-runtime-gray"
+                            '''
+                        )
+                    }
+                }
+            }
+        }
+
         stage('Run Mondressy US Runtime Gray Validation') {
             steps {
                 withCredentials([
@@ -136,26 +170,28 @@ pipeline {
                     )
                 ]) {
                     script {
-                        int exitCode
                         if (isUnix()) {
-                            exitCode = sh(
-                                returnStatus: true,
+                            def pythonExitCode = sh(
                                 script: '''
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
                                         --viewport desktop \
                                         --page home
-                                '''
+                                ''',
+                                returnStatus: true
                             )
+                            env.GRAY_PYTHON_EXIT_CODE =
+                                pythonExitCode.toString()
                         } else {
-                            exitCode = bat(
-                                returnStatus: true,
+                            def pythonExitCode = bat(
                                 script: '''
                                     @.venv\\Scripts\\python.exe -u run_all.py --site mondressy_US --viewport desktop --page home
-                                '''
+                                ''',
+                                returnStatus: true
                             )
+                            env.GRAY_PYTHON_EXIT_CODE =
+                                pythonExitCode.toString()
                         }
-                        env.GRAY_PYTHON_EXIT_CODE = "${exitCode}"
                     }
                 }
             }
@@ -193,7 +229,20 @@ pipeline {
                 script {
                     try {
                         archiveArtifacts(
-                            artifacts: "artifacts/${env.VISUAL_RUN_ID}/**,reports/visual-results.json",
+                            artifacts: (
+                                "artifacts/${env.VISUAL_RUN_ID}/artifact-summary.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/visual-results.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/**/artifact-manifest.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/**/runtime/*.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/**/current/*.png," +
+                                "artifacts/${env.VISUAL_RUN_ID}/**/diff/*.png," +
+                                "reports/visual-results.json"
+                            ),
+                            excludes: (
+                                "artifacts/${env.VISUAL_RUN_ID}/**/.tmp/**," +
+                                "artifacts/${env.VISUAL_RUN_ID}/**/.staging-*," +
+                                "**/baselines/**,**/.venv/**,**/__pycache__/**"
+                            ),
                             allowEmptyArchive: true,
                             fingerprint: true
                         )
@@ -201,6 +250,38 @@ pipeline {
                         echo(
                             'Gray evidence archive encountered an error; ' +
                             'result evaluation will still continue.'
+                        )
+                    }
+                }
+            }
+        }
+
+        stage('Clean Current Run Temporary Artifacts') {
+            steps {
+                script {
+                    int cleanupExitCode
+                    if (isUnix()) {
+                        cleanupExitCode = sh(
+                            script: '''
+                                .venv/bin/python -u \
+                                    -m playwright_checks.artifacts.cleanup \
+                                    --keep-run "$VISUAL_RUN_ID" \
+                                    --current-run-temp
+                            ''',
+                            returnStatus: true
+                        )
+                    } else {
+                        cleanupExitCode = bat(
+                            script: '''
+                                @.venv\\Scripts\\python.exe -u -m playwright_checks.artifacts.cleanup --keep-run "%VISUAL_RUN_ID%" --current-run-temp
+                            ''',
+                            returnStatus: true
+                        )
+                    }
+                    if (cleanupExitCode != 0) {
+                        echo(
+                            'Temporary artifact cleanup reported a non-zero ' +
+                            'status; result evaluation will continue.'
                         )
                     }
                 }

@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +11,8 @@ RUN_ID_ENV = "VISUAL_RUN_ID"
 LEGACY_BASELINE_FALLBACK_ENV = "VISUAL_LEGACY_BASELINE_FALLBACK"
 
 _RUN_ID = None
+_ATTEMPT_LOCK = threading.Lock()
+_PAGE_ATTEMPTS = {}
 
 
 def _project_path(value):
@@ -97,20 +100,35 @@ def artifact_page_dir(site, page, viewport=None):
     return artifact_viewport_dir(site, viewport) / page
 
 
-def page_paths(site, page):
+def next_page_attempt(site, page, viewport=None):
+    viewport_name = viewport or get_current_viewport_name()
+    key = (current_run_id(), site, viewport_name, page)
+    with _ATTEMPT_LOCK:
+        attempt = _PAGE_ATTEMPTS.get(key, 0) + 1
+        _PAGE_ATTEMPTS[key] = attempt
+    return attempt
+
+
+def page_paths(site, page, attempt=None):
     page_dir = artifact_page_dir(site, page)
+    selected_attempt = int(
+        attempt or next_page_attempt(site, page)
+    )
+    temp_dir = page_dir / ".tmp" / f"attempt-{selected_attempt}"
     legacy_dir = None
     if legacy_baseline_fallback_enabled():
         legacy_dir = legacy_baseline_dir(site, page)
 
     return {
         "run_id": current_run_id(),
+        "attempt": selected_attempt,
         "root_dir": str(artifact_viewport_dir(site)),
         "page_dir": str(page_dir),
+        "temp_dir": str(temp_dir),
         "baseline_dir": str(baseline_dir(site, page)),
         "legacy_baseline_dir": str(legacy_dir) if legacy_dir else None,
-        "current_dir": str(page_dir / "current"),
-        "diff_dir": str(page_dir / "diff"),
+        "current_dir": str(temp_dir / "current"),
+        "diff_dir": str(temp_dir / "diff"),
     }
 
 

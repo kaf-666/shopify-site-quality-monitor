@@ -90,23 +90,69 @@ def scroll_to_load_all(page_model, timeout=10, max_scrolls=20):
     return last_count
 
 
-def check_product_count(page_model):
+def check_product_count(ctx, page_model):
     print("\nProduct count checks")
     failures = []
 
     scroll_to_load_all(page_model, timeout=15)
     count = get_product_cards(page_model).count()
+    layout_checks = (
+        ctx.page_config.get("layout_checks", {}).get(
+            "product_grid",
+            {},
+        )
+    )
+    minimum_count = int(layout_checks.get("minimum_count", 1))
+
+    if count < minimum_count:
+        print(
+            f"FAIL product count: {count}, minimum {minimum_count}"
+        )
+        failures.append(
+            f"product grid count below minimum: "
+            f"actual {count}, minimum {minimum_count}"
+        )
+        return failures
 
     if page_model.expected_count is None:
-        print(f"product count: {count} (expected_count not configured, skipped)")
+        print(
+            f"OK product count: {count} "
+            "(expected_count not configured)"
+        )
         return failures
 
     if count == page_model.expected_count:
         print(f"OK product count: {count}")
     else:
-        print(f"FAIL product count: {count}, expected {page_model.expected_count}")
-        failures.append(
-            f"product count mismatch: actual {count}, expected {page_model.expected_count}"
+        print(
+            f"CONTENT_CHANGED product count: {count}, "
+            f"reference {page_model.expected_count}"
+        )
+        _paths, retention = ctx.artifact_manager.finalize_result(
+            "product_count",
+            "content_changed",
+            {},
+            artifact_type="content_change",
+            content_changes=["product_count_changed"],
+            structural_status="passed",
+        )
+        add_result(
+            build_result(
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                "product_count",
+                "content_changed",
+                None,
+                details={
+                    "actual_count": count,
+                    "reference_count": page_model.expected_count,
+                    "content_changes": ["product_count_changed"],
+                    "structural_status": "passed",
+                    "affects_exit_code": False,
+                    **retention,
+                },
+            )
         )
 
     return failures
@@ -219,7 +265,8 @@ def capture_card_image_stable(ctx, page_model, index, output_path, hover=False):
         output_path,
         prepare=prepare,
         attempts=3,
-        delay=1
+        delay=1,
+        artifact_manager=ctx.artifact_manager,
     )
 
 
@@ -322,7 +369,7 @@ def run():
 
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
-        failures.extend(check_product_count(page_model))
+        failures.extend(check_product_count(ctx, page_model))
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
 
@@ -338,9 +385,29 @@ def run():
             site_config=ctx.site_config,
             page_config=ctx.page_config,
             legacy_baseline_dir=ctx.legacy_baseline_dir,
+            artifact_manager=getattr(ctx, "artifact_manager", None),
         )
-        product_results = capture_product_cards(ctx, page_model)
-        hover_results = capture_hover_cards(ctx, page_model)
+        product_grid_policy = next(
+            (
+                region
+                for region in ctx.page_config.get(
+                    "dynamic_regions",
+                    [],
+                )
+                if region.get("name") == "product_grid"
+            ),
+            {},
+        )
+        if product_grid_policy.get("strategy") == "layout_only":
+            print(
+                "Collection product/hover pixel captures skipped: "
+                "product_grid uses layout_only"
+            )
+            product_results = {}
+            hover_results = {}
+        else:
+            product_results = capture_product_cards(ctx, page_model)
+            hover_results = capture_hover_cards(ctx, page_model)
 
         failures.extend(
             process_results(
@@ -348,6 +415,7 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
         failures.extend(
@@ -356,11 +424,36 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
-        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
-        failures.extend(process_results(product_results, ctx.site, ctx.suite, ctx.page_name))
-        failures.extend(process_results(hover_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(
+            process_results(
+                module_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
+        failures.extend(
+            process_results(
+                product_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
+        failures.extend(
+            process_results(
+                hover_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
 
     except Exception as e:
         if page_model is not None:
@@ -386,6 +479,9 @@ def run():
                     get_current_viewport_name(),
                 )
             )
+        artifact_manager = getattr(ctx, "artifact_manager", None)
+        if artifact_manager is not None:
+            artifact_manager.finalize_page(bool(failures))
         close_browser(playwright, browser, context)
 
     return failures

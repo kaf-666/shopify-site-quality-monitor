@@ -19,6 +19,8 @@ Current site configurations:
   and runtime-health defaults.
 - `configs/sites/*.yaml`: site URLs, selectors, capture rules, and per-site or
   per-page overrides.
+- `playwright_checks/artifacts/`: screenshot lifecycle, retention policy,
+  manifests, quota enforcement, and run-scoped cleanup.
 - `playwright_checks/core/`: configuration, browser setup, request-header
   injection, paths, logging, and result writing.
 - `playwright_checks/pages/`: Home, PLP, and PDP page objects.
@@ -185,6 +187,153 @@ $env:FORCE_BASELINE_INIT="1"
 Baseline updates should normally be reviewed locally and committed under
 `baselines/`, rather than generated automatically in CI.
 
+### Screenshot lifecycle and retained evidence
+
+Screenshots now follow one shared lifecycle:
+
+```text
+Capture into artifacts/<run>/<site>/<viewport>/<page>/.tmp/attempt-<n>/
+  -> Compare with the reviewed baseline
+  -> Run dynamic-region and structural checks
+  -> Classify PASS / CONTENT_CHANGED / WARNING / FAILED
+  -> Retain only useful evidence
+  -> Enforce page, site, and run quotas
+  -> Write page manifest and run summary
+  -> Remove current-run temporary files
+```
+
+This replaces the old flow in which each check selected its own temporary
+location and permanently stored every current/diff image. Temporary filenames
+include the full run context, retry attempt, and a UUID. They remain on the
+artifact filesystem. If a move nevertheless crosses filesystems, the manager
+handles only `EXDEV` by copying metadata and content before removing the source;
+all other move failures still propagate.
+
+The default local mode is `standard`. Jenkins explicitly selects
+`evidence_only`; `debug` is opt-in:
+
+| Result | evidence_only | standard | debug |
+| --- | --- | --- | --- |
+| PASS | Delete current/diff | Keep global and first-screen context only | Keep all |
+| CONTENT_CHANGED | JSON only | Optional representative evidence | Keep all |
+| WARNING | Keep current + diff | Keep current + diff | Keep all |
+| FAILED | Keep current + diff and failure context | Keep current + diff and context | Keep all |
+| BASELINE_MISSING | One representative current | One representative current | Keep all |
+| TERMINAL_PAGE | One terminal screenshot | One terminal screenshot | One terminal screenshot |
+
+`CONTENT_CHANGED` is non-blocking and records structured changes without
+changing the visual thresholds. A failed structural check always remains
+`FAILED`. Deleted image fields in `visual-results.json` are `null`; manifests
+are normalized so they never reference a deleted, missing, or out-of-root
+file.
+
+Configure the policy under `artifacts.screenshot_retention` in
+`configs/settings.yaml`. Every field has a safe default. These environment
+variables can override the mode and quotas:
+
+- `SCREENSHOT_RETENTION_MODE`
+- `SCREENSHOT_MAX_IMAGES_PER_PAGE`
+- `SCREENSHOT_MAX_MB_PER_PAGE`
+- `SCREENSHOT_MAX_MB_PER_SITE`
+- `SCREENSHOT_MAX_MB_PER_RUN`
+
+The default quotas are 12 images or 50 MB per page, 200 MB per site, and
+1000 MB per run. Quota eviction keeps evidence in this order: terminal page,
+global failure, first-screen failure, failed module, warning module, baseline
+missing, content-change representative, then debug evidence. PASS images
+never consume the long-term quota. Quota cleanup is best-effort and recorded
+instead of terminating the test run.
+
+Each checked page writes:
+
+```text
+artifacts/<run-id>/<site>/<viewport>/<page>/artifact-manifest.json
+```
+
+Example:
+
+```json
+{
+  "schema_version": "1.0",
+  "run_id": "build-123",
+  "site": "mondressy_US",
+  "viewport": "desktop",
+  "page": "home",
+  "retention_mode": "evidence_only",
+  "total_files": 2,
+  "total_bytes": 183420,
+  "retained_images": [
+    {
+      "case": "featured_collection",
+      "artifact_type": "module",
+      "visual_status": "failed",
+      "relative_path": "build-123/mondressy_US/desktop/home/current/featured_collection.png",
+      "size_bytes": 104210,
+      "retention_reason": "visual_failure",
+      "priority": 4
+    }
+  ],
+  "deleted_passed_images": [],
+  "content_changes": [],
+  "dropped_by_quota": [],
+  "temporary_cleanup_errors": []
+}
+```
+
+The run-level `artifacts/<run-id>/artifact-summary.json` aggregates only live
+retained files:
+
+```json
+{
+  "schema_version": "1.0",
+  "run_id": "build-123",
+  "total_images": 2,
+  "total_bytes": 183420,
+  "site_bytes": {"mondressy_US": 183420},
+  "page_bytes": {"mondressy_US/desktop/home": 183420},
+  "retained_passed": 0,
+  "retained_content_changed": 0,
+  "retained_warning": 0,
+  "retained_failed": 2,
+  "retained_terminal_page": 0,
+  "deleted_passed_images": 8,
+  "content_change_count": 1,
+  "dropped_by_quota": 0,
+  "largest_page": {
+    "page": "mondressy_US/desktop/home",
+    "size_bytes": 183420
+  },
+  "largest_site": {"site": "mondressy_US", "size_bytes": 183420}
+}
+```
+
+### Dynamic content policy
+
+Dynamic regions support three strategies:
+
+- `mask_content` treats configured product media, titles, prices, badges, and
+  similar operational content as changeable while preserving module and card
+  structure checks.
+- `layout_only` skips strict region pixel equality and validates existence,
+  visibility, minimum count, card dimensions/columns, overlap, image success,
+  titles, prices, and horizontal overflow.
+- `ignore_visual` performs no pixel comparison but still requires minimum
+  visibility and usable dimensions.
+
+For `mondressy_US`, Home product collections use `mask_content`; the Collection
+product grid uses `layout_only`; the configured Product monitoring item remains
+stable and its changeable information uses `mask_content`. Product count,
+order, image, title, price, and availability changes can therefore be reported
+as `CONTENT_CHANGED`. An empty or missing grid, card overlap, unexpected
+columns, mass image failures, horizontal overflow, missing titles/prices,
+missing filter/sort controls, an unavailable monitoring product, a blank
+gallery, or missing purchase controls remains a failure. The runner does not
+switch to a random product or update configuration/baselines automatically.
+Declared masks are also projected onto temporary comparison copies of global
+and first-screen captures, so the same operational content does not fail those
+context images. The original capture and every reviewed baseline remain
+unchanged.
+
 ## Runtime-health monitoring
 
 Runtime monitoring is enabled in `configs/settings.yaml`. It records evidence
@@ -269,3 +418,31 @@ Mondressy US home-page Runtime gray validation. It:
 
 The six-probe command above remains available as a standalone diagnostic; it is
 not invoked by this Jenkinsfile.
+
+Jenkins uses `SCREENSHOT_RETENTION_MODE=evidence_only` and
+`VISUAL_STRICT_WARNINGS=false`. `CONTENT_CHANGED`, visual warnings, and
+report-only Runtime findings do not block the gray build; a visual failure
+does. The Python process status is captured with `returnStatus` and copied to
+`env.GRAY_PYTHON_EXIT_CODE`, so statuses 0, 1, and 2 remain available to the
+summary even when the monitor command is nonzero.
+
+Build and archived-artifact retention are separate:
+
+- `buildDiscarder(logRotator(...))` keeps builds for 14 days/20 builds and
+  archived artifacts for 7 days/10 builds. Adjust these defaults to server
+  capacity.
+- `archiveArtifacts` is limited to the current run summary, page manifests,
+  Runtime/attempt JSON, visual results, and retained current/diff/terminal
+  evidence. It excludes `.tmp`, staging, baselines, `.venv`, `__pycache__`,
+  PASS images, and old run IDs.
+- A reused workspace is cleaned only for old artifact run directories at build
+  start. After archiving, cleanup removes only the current run's `.tmp`,
+  staging, plugin-probe, and temporary diff remnants. It never calls a blanket
+  `deleteDir` and never removes baselines or the active run.
+
+To validate the new behavior, manually trigger the same Jenkins Job that uses
+this repository's `Jenkinsfile`. After it finishes, return
+`GRAY_PYTHON_EXIT_CODE`, `GRAY_SUMMARY_EXIT_CODE`, Runtime Health, Visual
+Result, Content Changed count, `artifact-summary.json`, retained image count
+and bytes, deleted PASS image count, `dropped_by_quota`, Jenkins Archive size,
+and workspace disk size before/after the build.

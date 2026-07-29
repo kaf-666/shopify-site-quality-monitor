@@ -54,6 +54,7 @@ class RuntimeHealthSession:
             page_name,
             directory=evidence_directory,
         )
+        self._custom_evidence_directory = evidence_directory is not None
         self.pre_visual_health = None
         self.post_visual_state = None
         self.automation_errors = []
@@ -290,6 +291,33 @@ class RuntimeHealthSession:
                 "body_text_length": health.get("body_text_length"),
                 "dom_node_count": health.get("dom_node_count"),
             }
+            if (
+                not self._custom_evidence_directory
+                and self.page_available()
+            ):
+                try:
+                    from playwright_checks.artifacts.screenshot_manager import (
+                        ScreenshotArtifactManager,
+                    )
+
+                    terminal_path = ScreenshotArtifactManager(
+                        self.site,
+                        self.page_name,
+                        site_config=self.site_config,
+                        page_config=self.page_config,
+                    ).capture_terminal_page(
+                        self.page,
+                        self.navigation.status,
+                        self.navigation.final_url,
+                    )
+                    evidence_health["terminal_page_evidence"][
+                        "screenshot"
+                    ] = terminal_path
+                except Exception as error:
+                    self.collector._record_listener_error(
+                        "terminal_page_screenshot",
+                        error,
+                    )
         attempt_payload = {
             "timestamp": utc_timestamp(),
             "site": self.site,
@@ -649,6 +677,8 @@ def combine_statuses(visual_status, runtime_health_status):
         return "warning" if runtime_health_status != "failed" else "failed"
     if visual_status == "warning" or runtime_health_status == "warning":
         return "warning"
+    if visual_status == "content_changed":
+        return "content_changed"
     return "passed"
 
 

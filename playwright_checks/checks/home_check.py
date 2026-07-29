@@ -1,6 +1,5 @@
 import os
 import sys
-import tempfile
 import time
 
 import numpy as np
@@ -13,6 +12,7 @@ from playwright_checks.core.test_results import (
     write_results,
 )
 from playwright_checks.checks.context import PageCheckContext
+from playwright_checks.artifacts.screenshot_manager import safe_move
 from playwright_checks.pages.home_page import HomePage
 from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.runtime.session import (
@@ -226,15 +226,15 @@ def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
             time.sleep(0.3)
             continue
 
-        current_path = os.path.join(
-            tempfile.gettempdir(),
-            f"plugin_probe_{time.time_ns()}.png"
+        current_path = ctx.temporary_path(name, "plugin-probe")
+        current_compare_path = ctx.temporary_path(
+            name,
+            "plugin-probe-compare",
         )
-        current_compare_path = os.path.join(
-            tempfile.gettempdir(),
-            f"plugin_probe_compare_{time.time_ns()}.png"
+        ctx.artifact_manager.capture_element(
+            element,
+            current_path,
         )
-        element.screenshot(path=current_path)
         normalize_plugin_image_for_compare(
             ctx,
             name,
@@ -243,6 +243,10 @@ def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
         )
 
         if not plugin_image_ready(name, current_path):
+            _cleanup_plugin_probe(ctx, current_path)
+            _cleanup_plugin_probe(ctx, current_compare_path)
+            _cleanup_plugin_probe(ctx, previous_path)
+            _cleanup_plugin_probe(ctx, previous_compare_path)
             previous_path = None
             previous_compare_path = None
             time.sleep(0.3)
@@ -257,9 +261,15 @@ def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
             if name == "wishlist":
                 save_wishlist_canonical(ctx, output_path, fallback_path=current_path)
             else:
-                os.replace(current_path, output_path)
+                safe_move(current_path, output_path)
+            _cleanup_plugin_probe(ctx, current_path)
+            _cleanup_plugin_probe(ctx, previous_path)
+            _cleanup_plugin_probe(ctx, previous_compare_path)
+            _cleanup_plugin_probe(ctx, current_compare_path)
             return
 
+        _cleanup_plugin_probe(ctx, previous_path)
+        _cleanup_plugin_probe(ctx, previous_compare_path)
         previous_path = current_path
         previous_compare_path = current_compare_path
         time.sleep(0.3)
@@ -268,10 +278,16 @@ def capture_stable_plugin(ctx, page, name, locator, output_path, timeout=10):
         if name == "wishlist":
             save_wishlist_canonical(ctx, output_path, fallback_path=previous_path)
         else:
-            os.replace(previous_path, output_path)
+            safe_move(previous_path, output_path)
+        _cleanup_plugin_probe(ctx, previous_path)
+        _cleanup_plugin_probe(ctx, previous_compare_path)
         return
 
     raise Exception("plugin screenshot is not stable")
+
+
+def _cleanup_plugin_probe(ctx, path):
+    ctx.artifact_manager.discard_temporary(path)
 
 
 def capture_plugins(ctx, page_model):
@@ -484,6 +500,7 @@ def run():
             page_config=ctx.page_config,
             before_capture=before_home_module_capture_for_context,
             legacy_baseline_dir=ctx.legacy_baseline_dir,
+            artifact_manager=getattr(ctx, "artifact_manager", None),
         )
 
         failures.extend(
@@ -492,6 +509,7 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
         failures.extend(
@@ -500,10 +518,27 @@ def run():
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
             )
         )
-        failures.extend(process_results(module_results, ctx.site, ctx.suite, ctx.page_name))
-        failures.extend(process_results(plugin_results, ctx.site, ctx.suite, ctx.page_name))
+        failures.extend(
+            process_results(
+                module_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
+        failures.extend(
+            process_results(
+                plugin_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
 
     except Exception as e:
         if page_model is not None:
@@ -529,6 +564,9 @@ def run():
                     get_current_viewport_name(),
                 )
             )
+        artifact_manager = getattr(ctx, "artifact_manager", None)
+        if artifact_manager is not None:
+            artifact_manager.finalize_page(bool(failures))
         close_browser(playwright, browser, context)
 
     return failures

@@ -1,8 +1,12 @@
 import os
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter
 
+from playwright_checks.artifacts.dynamic import dynamic_region_for_case
+from playwright_checks.artifacts.screenshot_manager import (
+    ScreenshotArtifactManager,
+)
 from playwright_checks.core.config_loader import load_settings
 from playwright_checks.core.paths import current_run_id, relative_to_project
 from playwright_checks.core.test_results import add_result
@@ -411,14 +415,19 @@ def build_result(
         "legacy_baseline": None,
         "current": None,
         "diff": None,
+        "retained": False,
+        "retention_reason": None,
+        "structural_status": "passed",
+        "content_changes": [],
+        "affects_exit_code": status == "failed",
     }
 
     if paths:
         baseline = paths.get("baseline")
         target_baseline = paths.get("target_baseline")
         legacy_baseline = paths.get("legacy_baseline")
-        current = paths.get("current")
-        diff = paths.get("diff")
+        current = _existing_path(paths.get("current"))
+        diff = _existing_path(paths.get("diff"))
         result.update({
             "baseline": relative_to_project(baseline),
             "target_baseline": relative_to_project(target_baseline),
@@ -433,10 +442,8 @@ def build_result(
                     if target_baseline else None,
                     "legacy_baseline": os.path.abspath(legacy_baseline)
                     if legacy_baseline else None,
-                    "current": os.path.abspath(current)
-                    if current else None,
-                    "diff": os.path.abspath(diff)
-                    if diff else None,
+                    "current": os.path.abspath(current) if current else None,
+                    "diff": os.path.abspath(diff) if diff else None,
                 }
             },
         })
@@ -450,9 +457,130 @@ def build_result(
     return result
 
 
-def _add_failed_result(site, suite, page, name, paths, error, failures):
+def _existing_path(value):
+    return value if value and os.path.isfile(value) else None
+
+
+def _masked_compare_images(
+    manager,
+    name,
+    paths,
+    boxes,
+    coordinate_size=None,
+):
+    attempt = int(paths.get("attempt", 1) or 1)
+    outputs = {}
+    for kind, source_key in (
+        ("masked-baseline", "baseline"),
+        ("masked-current", "current"),
+    ):
+        source = paths[source_key]
+        target = manager.temporary_path(
+            name,
+            kind,
+            attempt=attempt,
+        )
+        with Image.open(source) as opened:
+            image = opened.copy()
+        draw = ImageDraw.Draw(image)
+        fill = _mask_fill(image.mode)
+        source_width = float(
+            (coordinate_size or {}).get("width", 0) or image.width
+        )
+        source_height = float(
+            (coordinate_size or {}).get("height", 0) or image.height
+        )
+        scale_x = image.width / max(source_width, 1)
+        scale_y = image.height / max(source_height, 1)
+        for box in boxes:
+            left = max(
+                0,
+                int(float(box.get("left", 0)) * scale_x) - 2,
+            )
+            top = max(
+                0,
+                int(float(box.get("top", 0)) * scale_y) - 2,
+            )
+            right = min(
+                image.width,
+                int(float(box.get("right", 0)) * scale_x) + 2,
+            )
+            bottom = min(
+                image.height,
+                int(float(box.get("bottom", 0)) * scale_y) + 2,
+            )
+            if right > left and bottom > top:
+                draw.rectangle(
+                    (left, top, right, bottom),
+                    fill=fill,
+                )
+        image.save(target)
+        outputs[source_key] = str(target)
+    return outputs["baseline"], outputs["current"]
+
+
+def _mask_fill(mode):
+    if mode == "RGBA":
+        return (255, 0, 255, 255)
+    if mode == "RGB":
+        return (255, 0, 255)
+    if mode in ("LA",):
+        return (128, 255)
+    return 128
+
+
+def _finalize_visual_artifacts(
+    manager,
+    name,
+    visual_status,
+    paths,
+    details,
+    retention_status=None,
+):
+    values, retention = manager.finalize_result(
+        name,
+        retention_status or visual_status,
+        paths,
+        content_changes=(details or {}).get("content_changes", []),
+        structural_status=(details or {}).get(
+            "structural_status",
+            "passed",
+        ),
+    )
+    merged = dict(details or {})
+    merged.update(retention)
+    merged["affects_exit_code"] = (
+        visual_status == "failed"
+        or (visual_status == "warning" and STRICT_WARNINGS)
+    )
+    return values, merged
+
+
+def _add_failed_result(
+    site,
+    suite,
+    page,
+    name,
+    paths,
+    error,
+    failures,
+    manager,
+    retention_status="capture_failed",
+    details=None,
+):
     print(f"FAIL [{name}] {error}")
     failures.append(f"visual [{name}] {error}")
+    result_paths, result_details = _finalize_visual_artifacts(
+        manager,
+        name,
+        "failed",
+        paths,
+        {
+            **capture_metadata(paths),
+            **(details or {}),
+        },
+        retention_status=retention_status,
+    )
     add_result(
         build_result(
             site,
@@ -460,27 +588,60 @@ def _add_failed_result(site, suite, page, name, paths, error, failures):
             page,
             name,
             "failed",
-            paths,
+            result_paths,
             error=error,
-            details=capture_metadata(paths),
+            details=result_details,
         )
     )
 
 
-def process_results(results, site="mondressy_US", suite="visual", page=None):
+def process_results(
+    results,
+    site="mondressy_US",
+    suite="visual",
+    page=None,
+    manager=None,
+):
     failures = []
+    manager = manager or ScreenshotArtifactManager(
+        site,
+        page or "unknown",
+    )
 
     for name, paths in results.items():
         if paths is None or paths.get("error"):
             error = paths.get("error") if paths else "capture failed"
-            _add_failed_result(site, suite, page, name, paths, error, failures)
+            _add_failed_result(
+                site,
+                suite,
+                page,
+                name,
+                paths,
+                error,
+                failures,
+                manager,
+            )
             continue
 
         cur = paths["current"]
         base = paths["baseline"]
         diff = paths["diff"]
+        dynamic_region = dynamic_region_for_case(
+            manager.page_config,
+            name,
+        )
+        dynamic_strategy = (
+            dynamic_region.get("strategy")
+            if dynamic_region
+            else paths.get("dynamic_strategy")
+        )
+        structural_status = paths.get("structural_status", "passed")
+        structural_issues = list(paths.get("structural_issues", []))
 
-        if not os.path.exists(base):
+        if not os.path.exists(base) and dynamic_strategy not in (
+            "ignore_visual",
+            "layout_only",
+        ):
             if not ALLOW_BASELINE_INIT:
                 if BASELINE_INIT_BLOCKED_BY_CI:
                     error = (
@@ -493,7 +654,21 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                         "baseline missing; set ALLOW_BASELINE_INIT=1 "
                         "to generate it locally"
                     )
-                _add_failed_result(site, suite, page, name, paths, error, failures)
+                _add_failed_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    paths,
+                    error,
+                    failures,
+                    manager,
+                    retention_status="baseline_missing",
+                    details={
+                        "structural_status": structural_status,
+                        "structural_issues": structural_issues,
+                    },
+                )
                 continue
 
             import shutil
@@ -502,6 +677,13 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
             print(f"INIT [{name}] baseline")
             shutil.copy2(cur, target_base)
             paths["baseline"] = target_base
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "initialized",
+                paths,
+                capture_metadata(paths),
+            )
             add_result(
                 build_result(
                     site,
@@ -509,25 +691,48 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                     page,
                     name,
                     "initialized",
-                    paths,
+                    result_paths,
                     ratio=0.0,
-                    details=capture_metadata(paths),
+                    details=result_details,
                 )
             )
             continue
 
-        compare_base = paths.get("compare_baseline", base)
-        compare_cur = paths.get("compare_current", cur)
-
-        ok, ratio, details = compare_images(
-            compare_base,
-            compare_cur,
-            diff
-        )
-        details.update(capture_metadata(paths))
-
-        if ok:
-            print(f"OK [{name}] normal {ratio:.4%}")
+        if dynamic_strategy == "ignore_visual":
+            if structural_status != "passed":
+                error = (
+                    "dynamic region structural checks failed: "
+                    + ", ".join(structural_issues)
+                )
+                _add_failed_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    paths,
+                    error,
+                    failures,
+                    manager,
+                    retention_status="failed",
+                    details={
+                        "dynamic_strategy": dynamic_strategy,
+                        "structural_status": structural_status,
+                        "structural_issues": structural_issues,
+                    },
+                )
+                continue
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "passed",
+                paths,
+                {
+                    **capture_metadata(paths),
+                    "dynamic_strategy": dynamic_strategy,
+                    "structural_status": structural_status,
+                    "structural_issues": structural_issues,
+                },
+            )
             add_result(
                 build_result(
                     site,
@@ -535,9 +740,196 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                     page,
                     name,
                     "passed",
+                    result_paths,
+                    details=result_details,
+                )
+            )
+            continue
+
+        if structural_status != "passed":
+            error = (
+                "dynamic region structural checks failed: "
+                + ", ".join(structural_issues)
+            )
+            _add_failed_result(
+                site,
+                suite,
+                page,
+                name,
+                paths,
+                error,
+                failures,
+                manager,
+                retention_status="failed",
+                details={
+                    "dynamic_strategy": dynamic_strategy,
+                    "structural_status": structural_status,
+                    "structural_issues": structural_issues,
+                },
+            )
+            continue
+
+        if dynamic_strategy == "layout_only":
+            content_changes = list(paths.get("content_changes", []))
+            item_count = (
+                (paths.get("layout_snapshot") or {}).get("item_count")
+            )
+            expected_count = manager.page_config.get("expected_count")
+            if (
+                item_count is not None
+                and expected_count is not None
+                and int(item_count) != int(expected_count)
+            ):
+                content_changes.append("product_count_changed")
+            if not content_changes:
+                content_changes.append(f"{name}_content_observed")
+            details = {
+                **capture_metadata(paths),
+                "dynamic_strategy": dynamic_strategy,
+                "structural_status": structural_status,
+                "structural_issues": structural_issues,
+                "content_changes": list(dict.fromkeys(content_changes)),
+                "layout_snapshot": paths.get("layout_snapshot"),
+                "pixel_compare_skipped": True,
+            }
+            print(
+                f"CONTENT_CHANGED [{name}]; "
+                "layout-only structural checks passed"
+            )
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "content_changed",
+                paths,
+                details,
+            )
+            add_result(
+                build_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    "content_changed",
+                    result_paths,
+                    details=result_details,
+                )
+            )
+            continue
+
+        compare_base = paths.get("compare_baseline", base)
+        compare_cur = paths.get("compare_current", cur)
+        raw_content_changed = False
+        raw_content_ratio = None
+        mask_boxes = list(paths.get("content_mask_boxes", []))
+        if dynamic_strategy == "mask_content" and mask_boxes:
+            raw_diff = manager.temporary_path(
+                name,
+                "raw-content-diff",
+                attempt=int(paths.get("attempt", 1) or 1),
+            )
+            raw_ok, raw_content_ratio, _raw_details = manager.compare(
+                compare_images,
+                base,
+                cur,
+                str(raw_diff),
+            )
+            raw_content_changed = not raw_ok
+            try:
+                compare_base, compare_cur = _masked_compare_images(
+                    manager,
+                    name,
                     paths,
+                    mask_boxes,
+                    paths.get("content_mask_coordinate_size"),
+                )
+            except Exception as error:
+                _add_failed_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    paths,
+                    (
+                        "dynamic content mask preparation failed: "
+                        f"{type(error).__name__}: {error}"
+                    ),
+                    failures,
+                    manager,
+                    retention_status="failed",
+                    details={
+                        "dynamic_strategy": dynamic_strategy,
+                        "structural_status": structural_status,
+                        "structural_issues": structural_issues,
+                    },
+                )
+                continue
+
+        ok, ratio, details = manager.compare(
+            compare_images,
+            compare_base,
+            compare_cur,
+            diff
+        )
+        details.update(capture_metadata(paths))
+        details.update(
+            {
+                "dynamic_strategy": dynamic_strategy,
+                "structural_status": structural_status,
+                "structural_issues": structural_issues,
+                "content_mask_count": len(mask_boxes),
+                "raw_content_ratio": raw_content_ratio,
+            }
+        )
+
+        if ok and dynamic_strategy == "mask_content" and raw_content_changed:
+            content_changes = list(paths.get("content_changes", []))
+            if not content_changes:
+                content_changes.append(f"{name}_content_changed")
+            details["content_changes"] = list(dict.fromkeys(content_changes))
+            print(
+                f"CONTENT_CHANGED [{name}] {raw_content_ratio:.2%}; "
+                "masked structure checks passed"
+            )
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "content_changed",
+                paths,
+                details,
+            )
+            add_result(
+                build_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    "content_changed",
+                    result_paths,
+                    ratio=raw_content_ratio,
+                    details=result_details,
+                )
+            )
+            continue
+
+        if ok:
+            print(f"OK [{name}] normal {ratio:.4%}")
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "passed",
+                paths,
+                details,
+            )
+            add_result(
+                build_result(
+                    site,
+                    suite,
+                    page,
+                    name,
+                    "passed",
+                    result_paths,
                     ratio=ratio,
-                    details=details,
+                    details=result_details,
                 )
             )
             continue
@@ -554,6 +946,13 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                 f"visual [{name}] size changed "
                 f"{baseline_size} -> {current_size}"
             )
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "failed",
+                paths,
+                details,
+            )
             add_result(
                 build_result(
                     site,
@@ -561,9 +960,9 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                     page,
                     name,
                     "failed",
-                    paths,
+                    result_paths,
                     ratio=ratio,
-                    details=details,
+                    details=result_details,
                 )
             )
             continue
@@ -573,6 +972,13 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                 f"WARN [{name}] minor changed {ratio:.2%}; "
                 "baseline was not updated"
             )
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "warning",
+                paths,
+                details,
+            )
             add_result(
                 build_result(
                     site,
@@ -580,9 +986,9 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                     page,
                     name,
                     "warning",
-                    paths,
+                    result_paths,
                     ratio=ratio,
-                    details=details,
+                    details=result_details,
                 )
             )
             if STRICT_WARNINGS:
@@ -593,6 +999,13 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
         failures.append(
             f"visual [{name}] diff {ratio:.2%} exceeds {CHANGE_THRESHOLD:.2%}"
         )
+        result_paths, result_details = _finalize_visual_artifacts(
+            manager,
+            name,
+            "failed",
+            paths,
+            details,
+        )
         add_result(
             build_result(
                 site,
@@ -600,9 +1013,9 @@ def process_results(results, site="mondressy_US", suite="visual", page=None):
                 page,
                 name,
                 "failed",
-                paths,
+                result_paths,
                 ratio=ratio,
-                details=details,
+                details=result_details,
             )
         )
 
