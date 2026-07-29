@@ -211,9 +211,8 @@ pipeline {
         stage('Print Runtime Summary') {
             steps {
                 script {
-                    int summaryExitCode
                     if (isUnix()) {
-                        summaryExitCode = sh(
+                        env.GRAY_SUMMARY_EXIT_CODE = sh(
                             returnStatus: true,
                             script: '''
                                 .venv/bin/python -u \
@@ -221,17 +220,28 @@ pipeline {
                                     --run-id "$VISUAL_RUN_ID" \
                                     --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
                             '''
-                        )
+                        ).toString()
                     } else {
-                        summaryExitCode = bat(
+                        env.GRAY_SUMMARY_EXIT_CODE = bat(
                             returnStatus: true,
                             script: '''
                                 @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
                             '''
+                        ).toString()
+                    }
+                    echo(
+                        'Captured GRAY_SUMMARY_EXIT_CODE=' +
+                        env.GRAY_SUMMARY_EXIT_CODE
+                    )
+                    def capturedSummaryCode =
+                        env.GRAY_SUMMARY_EXIT_CODE?.trim()
+                    if (!(capturedSummaryCode ==~ /^\d+$/)) {
+                        error(
+                            'Pipeline state error: invalid ' +
+                            'GRAY_SUMMARY_EXIT_CODE=' +
+                            "${capturedSummaryCode ?: '<empty>'}"
                         )
                     }
-                    env.GRAY_SUMMARY_EXIT_CODE =
-                        String.valueOf(summaryExitCode)
                 }
             }
         }
@@ -316,8 +326,21 @@ pipeline {
                             env.GRAY_PYTHON_EXIT_CODE
                         )
                     }
+                    if (!(env.GRAY_SUMMARY_EXIT_CODE ==~ /^\d+$/)) {
+                        error(
+                            'Pipeline state error: invalid ' +
+                            'GRAY_SUMMARY_EXIT_CODE=' +
+                            (
+                                env.GRAY_SUMMARY_EXIT_CODE
+                                ?: '<empty>'
+                            )
+                        )
+                    }
                     if (env.GRAY_SUMMARY_EXIT_CODE != '0') {
-                        error('Runtime gray summary validation failed.')
+                        error(
+                            'Runtime gray summary exit code: ' +
+                            env.GRAY_SUMMARY_EXIT_CODE
+                        )
                     }
                 }
             }

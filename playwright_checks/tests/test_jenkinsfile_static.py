@@ -213,6 +213,127 @@ class JenkinsfileStaticTests(unittest.TestCase):
             self.content.index("stage('Evaluate Result')"),
         )
 
+    def test_summary_exit_code_is_assigned_directly_to_env(self):
+        summary_index = self.content.index(
+            "stage('Print Runtime Summary')"
+        )
+        archive_index = self.content.index("stage('Archive Artifacts')")
+        evaluate_index = self.content.index("stage('Evaluate Result')")
+        post_index = self.content.index("    post {")
+        summary_stage = self.content[summary_index:archive_index]
+        after_summary = self.content[archive_index:]
+        post_block = self.content[post_index:]
+
+        unix_direct_assignment = re.search(
+            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*sh\("
+            r".*?returnStatus:\s*true.*?"
+            r"\)\.toString\(\)",
+            summary_stage,
+            re.DOTALL,
+        )
+        windows_direct_assignment = re.search(
+            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*bat\("
+            r".*?returnStatus:\s*true.*?"
+            r"\)\.toString\(\)",
+            summary_stage,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(unix_direct_assignment)
+        self.assertIsNotNone(windows_direct_assignment)
+        self.assertNotIn("int summaryExitCode", self.content)
+        self.assertNotIn("def summaryExitCode", self.content)
+        self.assertNotIn("String.valueOf(summaryExitCode)", self.content)
+        self.assertEqual(
+            1,
+            self.content.count(
+                "GRAY_SUMMARY_EXIT_CODE = 'not_run'"
+            ),
+        )
+        self.assertEqual(
+            2,
+            len(
+                re.findall(
+                    r"env\.GRAY_SUMMARY_EXIT_CODE\s*=\s*(?:sh|bat)\(",
+                    self.content,
+                )
+            ),
+        )
+        self.assertEqual(2, summary_stage.count("returnStatus: true"))
+        self.assertIn(
+            "Captured GRAY_SUMMARY_EXIT_CODE=",
+            summary_stage,
+        )
+        self.assertIn(
+            "def capturedSummaryCode =",
+            summary_stage,
+        )
+        self.assertIn(
+            "capturedSummaryCode ==~ /^\\d+$/",
+            summary_stage,
+        )
+        self.assertNotRegex(
+            after_summary,
+            r"env\.GRAY_SUMMARY_EXIT_CODE\s*=(?!=|~)",
+        )
+        self.assertNotRegex(
+            post_block,
+            r"GRAY_SUMMARY_EXIT_CODE\s*=(?!=|~)",
+        )
+        self.assertLess(summary_index, archive_index)
+        self.assertLess(archive_index, evaluate_index)
+
+    def test_evaluate_summary_exit_code_matrix(self):
+        evaluate_index = self.content.index("stage('Evaluate Result')")
+        post_index = self.content.index("    post {")
+        evaluate_stage = self.content[evaluate_index:post_index]
+
+        self.assertIn(
+            "env.GRAY_SUMMARY_EXIT_CODE ==~ /^\\d+$/",
+            evaluate_stage,
+        )
+        self.assertIn(
+            "env.GRAY_SUMMARY_EXIT_CODE != '0'",
+            evaluate_stage,
+        )
+        self.assertIn(
+            "Pipeline state error: invalid ",
+            evaluate_stage,
+        )
+        self.assertIn(
+            "Runtime gray summary exit code: ",
+            evaluate_stage,
+        )
+        self.assertNotIn(
+            "Runtime gray summary validation failed.",
+            evaluate_stage,
+        )
+        self.assertEqual(
+            evaluate_stage.count("if ("),
+            evaluate_stage.count("error("),
+        )
+
+        def expected_evaluate_action(value):
+            captured = (value or "").strip()
+            if not re.fullmatch(r"\d+", captured):
+                return "pipeline_state_error"
+            if captured != "0":
+                return f"summary_error:{captured}"
+            return "success"
+
+        cases = (
+            ("0", "success"),
+            ("1", "summary_error:1"),
+            ("2", "summary_error:2"),
+            ("not_run", "pipeline_state_error"),
+            ("", "pipeline_state_error"),
+        )
+        for value, expected in cases:
+            with self.subTest(summary_exit_code=value):
+                self.assertEqual(
+                    expected,
+                    expected_evaluate_action(value),
+                )
+
     def test_monitor_command_is_inside_with_credentials(self):
         run_index = self.content.index(
             "stage('Run Mondressy US Runtime Gray Validation')"
