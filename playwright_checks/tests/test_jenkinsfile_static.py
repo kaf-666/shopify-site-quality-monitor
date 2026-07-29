@@ -1,4 +1,3 @@
-import re
 import unittest
 from pathlib import Path
 
@@ -21,20 +20,18 @@ class JenkinsfileStaticTests(unittest.TestCase):
                 f"unbalanced {opening}{closing}",
             )
 
-    def test_only_the_gray_scope_is_invoked(self):
-        command = re.search(
-            r"run_all\.py(?P<args>.+?)(?:'''|\n\s*\))",
+    def test_only_the_six_probe_diagnostic_is_invoked(self):
+        self.assertIn(
+            "-m playwright_checks.diagnostics.mondressy_429",
             self.content,
-            flags=re.DOTALL,
         )
-        self.assertIsNotNone(command)
-        args = command.group("args")
-        self.assertIn("--site mondressy_US", args)
-        self.assertIn("--viewport desktop", args)
-        self.assertIn("--page home", args)
-        self.assertNotIn("--viewport mobile", args)
-        self.assertNotIn("--page collection", args)
-        self.assertNotIn("--page product", args)
+        self.assertIn("probe_order=curl,APIRequest,Chromium", self.content)
+        self.assertIn(
+            "hosts=mondressy.com,www.mondressy.com",
+            self.content,
+        )
+        self.assertNotIn("run_all.py", self.content)
+        self.assertNotIn("gray_summary", self.content)
 
     def test_runtime_gate_and_side_effect_controls_are_explicit(self):
         expected = (
@@ -46,6 +43,18 @@ class JenkinsfileStaticTests(unittest.TestCase):
         )
         for item in expected:
             self.assertIn(item, self.content)
+
+    def test_visual_and_side_effect_work_are_explicitly_disabled(self):
+        self.assertIn("visual_checks=false", self.content)
+        self.assertIn("side_effect_flows=false", self.content)
+        forbidden = (
+            "--page home",
+            "--page collection",
+            "--page product",
+            "add_to_cart_flow",
+        )
+        for item in forbidden:
+            self.assertNotIn(item, self.content.lower())
 
     def test_no_automatic_trigger_is_configured(self):
         forbidden = (
@@ -95,6 +104,13 @@ class JenkinsfileStaticTests(unittest.TestCase):
         )
         for command in forbidden_dump_commands:
             self.assertNotIn(command, self.content)
+
+    def test_diagnostic_uses_extra_headers_and_no_route_injection(self):
+        self.assertIn(
+            "request_header_injection=extra_http_headers",
+            self.content,
+        )
+        self.assertIn("chromium_route_injection=false", self.content)
 
     def test_dynamic_environment_access_is_forbidden(self):
         self.assertNotIn("env[", self.content)

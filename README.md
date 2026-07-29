@@ -125,6 +125,24 @@ The values are injected as `Signature`, `Signature-Input`, and
 `Signature-Agent` only for exact `mondressy.com`/`www.mondressy.com` requests.
 Do not commit these values.
 
+### Mondressy 429 diagnostic
+
+The standalone diagnostic compares curl, Playwright `APIRequestContext`, and
+Chromium against both Mondressy hosts. It performs one logical request per
+probe/host combination, follows and records redirects, and never runs the DOM,
+plugin, screenshot, baseline, cart, or checkout suites:
+
+```powershell
+.\.venv\Scripts\python.exe -m playwright_checks.diagnostics.mondressy_429 `
+  --output artifacts\local-mondressy-429\mondressy-429-diagnostic.json
+```
+
+All three signed-request environment variables are required. Console and JSON
+output contain only credential-presence booleans, safe `Signature-Input`
+metadata, selected response headers, a redacted body preview of at most 100
+characters, and body length. Full response bodies, credential values, cookies,
+and authorization headers are not retained.
+
 ## Baselines and visual policy
 
 Initialize missing local baselines only when intentionally reviewing a new
@@ -232,19 +250,19 @@ It uses the currently selected site configuration.
 ## Jenkins
 
 The current `Jenkinsfile` is a deliberately narrow, manually triggered
-Mondressy US runtime gray validation. It:
+Mondressy 429 diagnostic. It:
 
 1. Rejects non-user-triggered builds.
-2. Binds three Jenkins string credentials with IDs matching the Mondressy
-   environment-variable names above.
+2. Validates and then rebinds the three Jenkins string credentials without
+   printing their values.
 3. Installs dependencies and Playwright Chromium, then smoke-tests browser
    launch.
-4. Runs only `mondressy_US` Home on desktop in an intercepted cold context.
-5. Keeps runtime health report-only, makes visual warnings strict, and disables
-   baseline initialization and side-effect flows.
-6. Validates the generated evidence with
-   `playwright_checks.runtime.gray_summary`.
-7. Archives `artifacts/<VISUAL_RUN_ID>/**` and
-   `reports/visual-results.json`.
+4. Runs curl, `APIRequestContext`, and Chromium in that order against
+   `https://mondressy.com/` and `https://www.mondressy.com/`.
+5. Uses the same requested User-Agent, Accept, Accept-Language, Cache-Control,
+   Referer, and signed headers for all six combinations.
+6. Uses Chromium context `extra_http_headers` plus an explicit `page.goto`
+   referer; it does not use Route to inject signed headers.
+7. Archives only the redacted diagnostic JSON.
 
-This pipeline is not the all-sites/full-viewport regression suite.
+The pipeline does not invoke the visual runner or any side-effect flow.
