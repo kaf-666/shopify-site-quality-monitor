@@ -1,13 +1,15 @@
 """Screenshot artifact lifecycle management."""
 
-from playwright_checks.artifacts.screenshot_manager import (
-    ScreenshotArtifactManager,
-    finalize_artifact_run,
-    safe_move,
-)
-
 __all__ = (
     "ScreenshotArtifactManager",
     "finalize_artifact_run",
     "safe_move",
 )
+
+
+def __getattr__(name):
+    if name not in __all__:
+        raise AttributeError(name)
+    from playwright_checks.artifacts import screenshot_manager
+
+    return getattr(screenshot_manager, name)

@@ -125,11 +125,15 @@ BASELINE_INIT_BLOCKED_BY_CI = _baseline_init_blocked_by_ci()
 STRICT_WARNINGS = _strict_warnings_enabled()
 
 
-def _normalize_to_size(image, target_size):
+def _normalize_to_size(
+    image,
+    target_size,
+    background=(255, 255, 255),
+):
     if image.size == target_size:
         return image
 
-    normalized = Image.new("RGB", target_size, (255, 255, 255))
+    normalized = Image.new("RGB", target_size, background)
     crop = image.crop((
         0,
         0,
@@ -267,26 +271,64 @@ def _structural_diff_score(base, current):
     return mean_distance, changed_fraction
 
 
-def compare_images(img1_path, img2_path, diff_path):
+def compare_images(
+    img1_path,
+    img2_path,
+    diff_path,
+    size_tolerance=None,
+):
     base_image = Image.open(img1_path).convert("RGB")
     current_image = Image.open(img2_path).convert("RGB")
     width_delta = current_image.width - base_image.width
     height_delta = current_image.height - base_image.height
+    applied_tolerance = _resolved_size_tolerance(size_tolerance)
     size_within_tolerance = (
-        abs(width_delta) <= WIDTH_TOLERANCE_PX
-        and abs(height_delta) <= HEIGHT_TOLERANCE_PX
+        _dimension_within_tolerance(
+            width_delta,
+            base_image.width,
+            applied_tolerance["width_px"],
+            applied_tolerance["ratio"],
+        )
+        and _dimension_within_tolerance(
+            height_delta,
+            base_image.height,
+            applied_tolerance["height_px"],
+            applied_tolerance["ratio"],
+        )
+    )
+    normalized_for_compare = (
+        base_image.size != current_image.size
+        and size_within_tolerance
     )
     details = {
         "baseline_size": base_image.size,
         "current_size": current_image.size,
         "dimension_changed": base_image.size != current_image.size,
+        "width_delta": width_delta,
+        "height_delta": height_delta,
         "width_delta_px": width_delta,
         "height_delta_px": height_delta,
+        "applied_tolerance": applied_tolerance,
+        "normalized_for_compare": normalized_for_compare,
         "size_within_tolerance": size_within_tolerance,
         "size_mismatch": not size_within_tolerance,
     }
 
-    current_image = _normalize_to_size(current_image, base_image.size)
+    background = (
+        base_image.getpixel(
+            (
+                max(0, base_image.width - 1),
+                max(0, base_image.height - 1),
+            )
+        )
+        if size_tolerance is not None and size_within_tolerance
+        else (255, 255, 255)
+    )
+    current_image = _normalize_to_size(
+        current_image,
+        base_image.size,
+        background=background,
+    )
 
     img1 = np.array(base_image)
     img2 = np.array(current_image)
@@ -367,6 +409,63 @@ def compare_images(img1_path, img2_path, diff_path):
         Image.fromarray(highlight).save(diff_path)
 
     return ratio < CHANGE_THRESHOLD and not details["size_mismatch"], ratio, details
+
+
+def _resolved_size_tolerance(size_tolerance):
+    if size_tolerance is None:
+        return {
+            "width_px": WIDTH_TOLERANCE_PX,
+            "height_px": HEIGHT_TOLERANCE_PX,
+            "ratio": None,
+            "source": "legacy_default",
+        }
+    value = dict(size_tolerance or {})
+    ratio = value.get("ratio")
+    return {
+        "width_px": (
+            int(value["width_px"])
+            if value.get("width_px") is not None
+            else None
+        ),
+        "height_px": (
+            int(value["height_px"])
+            if value.get("height_px") is not None
+            else None
+        ),
+        "ratio": float(ratio) if ratio is not None else None,
+        "source": "case_config",
+    }
+
+
+def _dimension_within_tolerance(
+    delta,
+    baseline_dimension,
+    pixel_tolerance,
+    ratio_tolerance,
+):
+    difference = abs(int(delta))
+    limits = []
+    if pixel_tolerance is not None:
+        limits.append(float(pixel_tolerance))
+    if ratio_tolerance is not None:
+        limits.append(
+            max(int(baseline_dimension), 1)
+            * float(ratio_tolerance)
+        )
+    return difference <= max(limits) if limits else difference == 0
+
+
+def case_size_tolerance(page_config, case):
+    configured = (page_config or {}).get("size_tolerance")
+    if not isinstance(configured, dict):
+        return None
+    if any(
+        key in configured
+        for key in ("width_px", "height_px", "ratio")
+    ):
+        return configured
+    selected = configured.get(case)
+    return selected if isinstance(selected, dict) else None
 
 
 def capture_metadata(paths):
@@ -637,6 +736,13 @@ def process_results(
         )
         structural_status = paths.get("structural_status", "passed")
         structural_issues = list(paths.get("structural_issues", []))
+        structural_diagnostics = dict(
+            paths.get("structural_diagnostics", {}) or {}
+        )
+        size_tolerance = case_size_tolerance(
+            manager.page_config,
+            name,
+        )
 
         if not os.path.exists(base) and dynamic_strategy not in (
             "ignore_visual",
@@ -667,6 +773,7 @@ def process_results(
                     details={
                         "structural_status": structural_status,
                         "structural_issues": structural_issues,
+                        "structural_diagnostics": structural_diagnostics,
                     },
                 )
                 continue
@@ -718,6 +825,7 @@ def process_results(
                         "dynamic_strategy": dynamic_strategy,
                         "structural_status": structural_status,
                         "structural_issues": structural_issues,
+                        "structural_diagnostics": structural_diagnostics,
                     },
                 )
                 continue
@@ -731,6 +839,7 @@ def process_results(
                     "dynamic_strategy": dynamic_strategy,
                     "structural_status": structural_status,
                     "structural_issues": structural_issues,
+                    "structural_diagnostics": structural_diagnostics,
                 },
             )
             add_result(
@@ -765,6 +874,7 @@ def process_results(
                     "dynamic_strategy": dynamic_strategy,
                     "structural_status": structural_status,
                     "structural_issues": structural_issues,
+                    "structural_diagnostics": structural_diagnostics,
                 },
             )
             continue
@@ -788,6 +898,7 @@ def process_results(
                 "dynamic_strategy": dynamic_strategy,
                 "structural_status": structural_status,
                 "structural_issues": structural_issues,
+                "structural_diagnostics": structural_diagnostics,
                 "content_changes": list(dict.fromkeys(content_changes)),
                 "layout_snapshot": paths.get("layout_snapshot"),
                 "pixel_compare_skipped": True,
@@ -832,6 +943,7 @@ def process_results(
                 base,
                 cur,
                 str(raw_diff),
+                size_tolerance=size_tolerance,
             )
             raw_content_changed = not raw_ok
             try:
@@ -860,6 +972,7 @@ def process_results(
                         "dynamic_strategy": dynamic_strategy,
                         "structural_status": structural_status,
                         "structural_issues": structural_issues,
+                        "structural_diagnostics": structural_diagnostics,
                     },
                 )
                 continue
@@ -868,7 +981,8 @@ def process_results(
             compare_images,
             compare_base,
             compare_cur,
-            diff
+            diff,
+            size_tolerance=size_tolerance,
         )
         details.update(capture_metadata(paths))
         details.update(
@@ -876,6 +990,7 @@ def process_results(
                 "dynamic_strategy": dynamic_strategy,
                 "structural_status": structural_status,
                 "structural_issues": structural_issues,
+                "structural_diagnostics": structural_diagnostics,
                 "content_mask_count": len(mask_boxes),
                 "raw_content_ratio": raw_content_ratio,
             }

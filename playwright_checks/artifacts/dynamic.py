@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 
 VALID_DYNAMIC_STRATEGIES = (
@@ -169,6 +170,8 @@ def dynamic_region_for_case(page_config, case):
 
 def audit_dynamic_region(element, region, page_config=None):
     strategy = region.get("strategy")
+    region_name = region.get("name") or region.get("module") or "dynamic"
+    region_type = str(region.get("region_type") or "grid").strip().lower()
     item_selector = region.get("item_selector")
     mask_selectors = [
         value
@@ -189,6 +192,8 @@ def audit_dynamic_region(element, region, page_config=None):
             {},
         )
     )
+    region_selector = _region_selector(page_config, region)
+    audit_started = time.perf_counter()
     state = element.evaluate(
         """
         (root, options) => {
@@ -215,6 +220,25 @@ def audit_dynamic_region(element, region, page_config=None):
                 ? Array.from(root.querySelectorAll(options.itemSelector))
                 : [];
             const rootRect = rectOf(root);
+            const visibleWithinRoot = (node) => {
+                if (!visible(node)) return false;
+                if (
+                    node.getAttribute('aria-hidden') === 'true'
+                    || node.closest('[aria-hidden="true"]')
+                ) {
+                    return false;
+                }
+                const rect = node.getBoundingClientRect();
+                const intersectionWidth = Math.min(
+                    rect.right,
+                    rootRect.right
+                ) - Math.max(rect.left, rootRect.left);
+                const intersectionHeight = Math.min(
+                    rect.bottom,
+                    rootRect.bottom
+                ) - Math.max(rect.top, rootRect.top);
+                return intersectionWidth > 1 && intersectionHeight > 1;
+            };
             const maskBoxes = [];
             for (const selector of options.maskSelectors || []) {
                 for (const node of root.querySelectorAll(selector)) {
@@ -234,12 +258,14 @@ def audit_dynamic_region(element, region, page_config=None):
                     });
                 }
             }
-            const visibleItems = items.filter(visible);
+            const visibleItems = items.filter(visibleWithinRoot);
             const itemData = visibleItems.map((item) => {
                 const image = item.querySelector('img');
                 const title = item.querySelector(
                     options.titleSelector
-                    || '.grid-product__title, .card__heading, '
+                    || '.collection-item__title, '
+                    + '[class*="collection"][class*="title"], '
+                    + '.grid-product__title, .card__heading, '
                     + '.product-card__title, [class*="product"][class*="title"]'
                 );
                 const price = item.querySelector(
@@ -263,12 +289,23 @@ def audit_dynamic_region(element, region, page_config=None):
             return {
                 visible: visible(root),
                 rootRect,
-                horizontalOverflow:
-                    root.scrollWidth > root.clientWidth + 2
-                    || document.documentElement.scrollWidth
+                containerHorizontalOverflow:
+                    root.scrollWidth > root.clientWidth + 2,
+                pageHorizontalOverflow:
+                    document.documentElement.scrollWidth
                         > document.documentElement.clientWidth + 2,
                 itemCount: items.length,
                 visibleItemCount: visibleItems.length,
+                isCarousel:
+                    options.configuredCarousel
+                    || root.matches(
+                        '.flickity-enabled, .swiper, .slick-slider, '
+                        + '[data-slider], [aria-roledescription="carousel"]'
+                    )
+                    || Boolean(root.querySelector(
+                        '.flickity-enabled, .swiper, .slick-slider, '
+                        + '[data-slider], [aria-roledescription="carousel"]'
+                    )),
                 items: itemData,
                 maskBoxes,
             };
@@ -279,9 +316,27 @@ def audit_dynamic_region(element, region, page_config=None):
             "maskSelectors": mask_selectors,
             "titleSelector": checks.get("title_selector"),
             "priceSelector": checks.get("price_selector"),
+            "configuredCarousel": region_type.endswith("carousel"),
         },
     )
-    result = evaluate_structural_snapshot(state, strategy, checks)
+    result = evaluate_structural_snapshot(
+        state,
+        strategy,
+        checks,
+        region_type=region_type,
+    )
+    diagnostic = result.setdefault("structural_diagnostics", {})
+    diagnostic.update(
+        {
+            "region": region_name,
+            "region_selector": region_selector,
+            "item_selector": item_selector or "",
+            "audit_duration_ms": round(
+                (time.perf_counter() - audit_started) * 1000,
+                2,
+            ),
+        }
+    )
     result["content_mask_boxes"] = state.get("maskBoxes", [])
     root_rect = state.get("rootRect") or {}
     result["content_mask_coordinate_size"] = {
@@ -291,23 +346,82 @@ def audit_dynamic_region(element, region, page_config=None):
     return result
 
 
-def evaluate_structural_snapshot(state, strategy, checks=None):
+def evaluate_structural_snapshot(
+    state,
+    strategy,
+    checks=None,
+    region_type="grid",
+):
     checks = checks or {}
+    normalized_type = str(region_type or "grid").strip().lower()
+    is_carousel = bool(
+        state.get("isCarousel")
+        or normalized_type.endswith("carousel")
+    )
     issues = []
     if not state.get("visible"):
         issues.append("dynamic_region_not_visible")
     root = state.get("rootRect") or {}
     if root.get("width", 0) <= 0 or root.get("height", 0) <= 0:
         issues.append("dynamic_region_has_no_size")
-    if checks.get("check_horizontal_overflow", True) and state.get(
-        "horizontalOverflow"
+    page_overflow = bool(
+        state.get(
+            "pageHorizontalOverflow",
+            state.get("horizontalOverflow", False),
+        )
+    )
+    container_overflow = bool(
+        state.get(
+            "containerHorizontalOverflow",
+            state.get("horizontalOverflow", False),
+        )
+    )
+    if checks.get("check_horizontal_overflow", True) and (
+        page_overflow or (container_overflow and not is_carousel)
     ):
         issues.append("horizontal_overflow")
 
     items = state.get("items") or []
-    if strategy == "layout_only" or checks.get("minimum_count") is not None:
-        minimum = int(checks.get("minimum_count", 1))
-        if int(state.get("visibleItemCount", 0) or 0) < minimum:
+    matched_count = int(state.get("itemCount", 0) or 0)
+    visible_count = int(state.get("visibleItemCount", 0) or 0)
+    hidden_count = max(0, matched_count - visible_count)
+    image_success_count = sum(
+        1 for item in items if item.get("imageReady")
+    )
+    image_total_count = len(items)
+    count_rules_enabled = (
+        strategy == "layout_only"
+        or checks.get("minimum_count") is not None
+    )
+    minimum = (
+        int(checks.get("minimum_count", 1))
+        if count_rules_enabled
+        else 0
+    )
+    diagnostics = {
+        "region": "",
+        "region_selector": "",
+        "item_selector": "",
+        "minimum_count": minimum,
+        "matched_count": matched_count,
+        "visible_count": visible_count,
+        "hidden_count": hidden_count,
+        "image_success_count": image_success_count,
+        "image_total_count": image_total_count,
+        "is_carousel": is_carousel,
+        "region_type": normalized_type,
+        "page_horizontal_overflow": page_overflow,
+        "container_horizontal_overflow": container_overflow,
+    }
+    if count_rules_enabled:
+        if matched_count == 0:
+            issues.append("dynamic_region_item_selector_no_match")
+        if visible_count == 0:
+            issues.append("dynamic_region_no_visible_items")
+        if is_carousel:
+            if matched_count < minimum:
+                issues.append("carousel_below_minimum_count")
+        elif visible_count < minimum:
             issues.append("product_grid_below_minimum_count")
         rects = [item.get("rect") or {} for item in items]
         if checks.get("check_overlap", True) and _has_overlap(rects):
@@ -331,35 +445,60 @@ def evaluate_structural_snapshot(state, strategy, checks=None):
             full_rows = _row_counts(rects)[:-1]
             if full_rows and len(set(full_rows)) > 1:
                 issues.append("product_grid_column_count_unexpected")
-        if checks.get("check_image_visible", True) and items:
-            success_rate = sum(
-                1 for item in items if item.get("imageReady")
-            ) / len(items)
-            minimum_rate = float(
-                checks.get("minimum_image_success_rate", 0.9)
-            )
-            if success_rate < minimum_rate:
-                issues.append("product_image_success_rate_low")
-        if checks.get("check_title_present", True) and any(
-            not item.get("title") for item in items
-        ):
-            issues.append("product_title_missing")
-        if checks.get("check_price_present", True) and any(
-            not item.get("price") for item in items
-        ):
-            issues.append("product_price_missing")
+        if is_carousel:
+            require_image = checks.get("check_image_visible", True)
+            require_title = checks.get("check_title_present", True)
+            require_price = checks.get("check_price_present", True)
+            valid_cards = [
+                item
+                for item in items
+                if (not require_image or item.get("imageReady"))
+                and (not require_title or item.get("title"))
+                and (not require_price or item.get("price"))
+            ]
+            diagnostics["valid_card_count"] = len(valid_cards)
+            if visible_count > 0 and not valid_cards:
+                issues.append("carousel_item_structure_missing")
+        else:
+            if checks.get("check_image_visible", True) and items:
+                success_rate = image_success_count / len(items)
+                minimum_rate = float(
+                    checks.get("minimum_image_success_rate", 0.9)
+                )
+                if success_rate < minimum_rate:
+                    issues.append("product_image_success_rate_low")
+            if checks.get("check_title_present", True) and any(
+                not item.get("title") for item in items
+            ):
+                issues.append("product_title_missing")
+            if checks.get("check_price_present", True) and any(
+                not item.get("price") for item in items
+            ):
+                issues.append("product_price_missing")
 
     snapshot = content_snapshot(items)
     return {
         "dynamic_strategy": strategy,
         "structural_status": "failed" if issues else "passed",
         "structural_issues": issues,
+        "structural_diagnostics": diagnostics,
         "layout_snapshot": {
-            "item_count": state.get("itemCount", 0),
-            "visible_item_count": state.get("visibleItemCount", 0),
+            "item_count": matched_count,
+            "visible_item_count": visible_count,
             "content_fingerprint": snapshot["fingerprint"],
         },
     }
+
+
+def _region_selector(page_config, region):
+    module_name = region.get("module")
+    modules = (page_config or {}).get("modules", {}) or {}
+    value = modules.get(module_name)
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        method, selector = value
+        return selector if method == "css" else f"xpath={selector}"
+    selector = region.get("selector")
+    return str(selector or "")
 
 
 def content_snapshot(items):

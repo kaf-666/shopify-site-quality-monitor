@@ -85,15 +85,19 @@ class JenkinsfileStaticTests(unittest.TestCase):
             "stage('Print Runtime Summary')"
         )
         archive_index = self.content.index("stage('Archive Artifacts')")
+        cleanup_index = self.content.index(
+            "stage('Clean Current Run Temporary Artifacts')"
+        )
         evaluate_index = self.content.index("stage('Evaluate Result')")
         self.assertLess(run_index, summary_index)
         self.assertLess(summary_index, archive_index)
-        self.assertLess(archive_index, evaluate_index)
+        self.assertLess(archive_index, cleanup_index)
+        self.assertLess(cleanup_index, evaluate_index)
 
         run_stage = self.content[run_index:summary_index]
         summary_stage = self.content[summary_index:archive_index]
         archive_stage = self.content[archive_index:evaluate_index]
-        self.assertIn("returnStatus: true", run_stage)
+        self.assertEqual(2, run_stage.count("returnStatus: true"))
         self.assertIn("returnStatus: true", summary_stage)
         self.assertIn("archiveArtifacts(", archive_stage)
         self.assertIn("allowEmptyArchive: true", archive_stage)
@@ -127,10 +131,48 @@ class JenkinsfileStaticTests(unittest.TestCase):
         )
 
     def test_python_exit_code_is_converted_without_env_shadowing(self):
-        self.assertIn("def pythonExitCode = sh(", self.content)
-        self.assertIn("def pythonExitCode = bat(", self.content)
-        self.assertIn("pythonExitCode.toString()", self.content)
-        self.assertNotIn("int GRAY_PYTHON_EXIT_CODE", self.content)
+        self.assertEqual(1, self.content.count("int pythonExitCode"))
+        self.assertNotIn("def pythonExitCode", self.content)
+        self.assertEqual(1, self.content.count("pythonExitCode = sh("))
+        self.assertEqual(1, self.content.count("pythonExitCode = bat("))
+        self.assertIn(
+            "String.valueOf(pythonExitCode)",
+            self.content,
+        )
+        self.assertIn(
+            "Captured GRAY_PYTHON_EXIT_CODE=",
+            self.content,
+        )
+        self.assertIn(
+            "env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/",
+            self.content,
+        )
+        self.assertIn(
+            "Pipeline state error: Python command output ",
+            self.content,
+        )
+        self.assertNotIn(
+            "Gray validation Python process did not run.",
+            self.content,
+        )
+        self.assertIn(
+            "GRAY_PIPELINE_STATE_ERROR = 'false'",
+            self.content,
+        )
+        self.assertIn(
+            "env.GRAY_PIPELINE_STATE_ERROR = 'true'",
+            self.content,
+        )
+        self.assertEqual(
+            1,
+            self.content.count(
+                "GRAY_PYTHON_EXIT_CODE = 'not_run'"
+            ),
+        )
+        self.assertIn(
+            '--python-exit-code "$GRAY_PYTHON_EXIT_CODE"',
+            self.content,
+        )
         self.assertLess(
             self.content.index("stage('Print Runtime Summary')"),
             self.content.index("stage('Archive Artifacts')"),

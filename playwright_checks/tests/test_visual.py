@@ -21,11 +21,12 @@ class CompareImagesTest(unittest.TestCase):
         image.save(path)
         return path
 
-    def compare(self, baseline, current):
+    def compare(self, baseline, current, size_tolerance=None):
         return compare_images(
             str(baseline),
             str(current),
             str(self.root / "diff.png"),
+            size_tolerance=size_tolerance,
         )
 
     def test_one_pixel_capture_shift_is_aligned(self):
@@ -83,6 +84,101 @@ class CompareImagesTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertGreater(ratio, 0.9)
         self.assertFalse(details["size_mismatch"])
+
+    def test_currency_one_pixel_width_delta_continues_compare(self):
+        baseline = Image.new("RGB", (69, 34), (245, 245, 245))
+        current = Image.new("RGB", (68, 34), (245, 245, 245))
+
+        ok, ratio, details = self.compare(
+            self.save("baseline.png", baseline),
+            self.save("current.png", current),
+            {
+                "width_px": 2,
+                "height_px": 2,
+                "ratio": 0.03,
+            },
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(0.0, ratio)
+        self.assertEqual(-1, details["width_delta"])
+        self.assertEqual(0, details["height_delta"])
+        self.assertTrue(details["normalized_for_compare"])
+        self.assertEqual(
+            "case_config",
+            details["applied_tolerance"]["source"],
+        )
+
+    def test_currency_width_delta_over_tolerance_fails(self):
+        baseline = Image.new("RGB", (69, 34), "white")
+        current = Image.new("RGB", (75, 34), "white")
+
+        ok, _ratio, details = self.compare(
+            self.save("baseline.png", baseline),
+            self.save("current.png", current),
+            {
+                "width_px": 2,
+                "height_px": 2,
+                "ratio": 0.03,
+            },
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(details["size_mismatch"])
+        self.assertFalse(details["normalized_for_compare"])
+
+    def test_currency_height_delta_over_tolerance_fails(self):
+        baseline = Image.new("RGB", (69, 34), "white")
+        current = Image.new("RGB", (69, 37), "white")
+
+        ok, _ratio, details = self.compare(
+            self.save("baseline.png", baseline),
+            self.save("current.png", current),
+            {
+                "width_px": 2,
+                "height_px": 2,
+                "ratio": 0.03,
+            },
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(3, details["height_delta"])
+        self.assertTrue(details["size_mismatch"])
+
+    def test_tolerated_geometry_with_large_pixel_diff_still_fails(self):
+        baseline = Image.new("RGB", (69, 34), "white")
+        current = Image.new("RGB", (68, 34), "black")
+
+        ok, ratio, details = self.compare(
+            self.save("baseline.png", baseline),
+            self.save("current.png", current),
+            {
+                "width_px": 2,
+                "height_px": 2,
+                "ratio": 0.03,
+            },
+        )
+
+        self.assertFalse(ok)
+        self.assertGreater(ratio, 0.9)
+        self.assertFalse(details["size_mismatch"])
+        self.assertTrue(details["normalized_for_compare"])
+
+    def test_unconfigured_width_delta_keeps_legacy_behavior(self):
+        baseline = Image.new("RGB", (69, 34), "white")
+        current = Image.new("RGB", (68, 34), "white")
+
+        ok, _ratio, details = self.compare(
+            self.save("baseline.png", baseline),
+            self.save("current.png", current),
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(details["size_mismatch"])
+        self.assertEqual(
+            "legacy_default",
+            details["applied_tolerance"]["source"],
+        )
 
     def test_cdn_reencoding_uses_perceptual_fallback(self):
         baseline = Image.new("RGB", (240, 240), "white")

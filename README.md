@@ -334,6 +334,27 @@ and first-screen captures, so the same operational content does not fail those
 context images. The original capture and every reviewed baseline remain
 unchanged.
 
+Home carousel diagnostics distinguish matched, visible, and hidden cards.
+Intentional off-screen/clone cards do not have to be visible simultaneously;
+at least one visible card must retain the configured image/title/price
+structure. Collection fixed grids continue to enforce their visible-count and
+image-success rules independently.
+
+Small, case-specific geometry drift can be configured without changing global
+visual thresholds:
+
+```yaml
+size_tolerance:
+  currency:
+    width_px: 2
+    height_px: 2
+    ratio: 0.03
+```
+
+Within tolerance, the current image is padded/cropped to the baseline canvas
+using the baseline corner background and pixel comparison continues. Larger
+geometry changes still fail.
+
 ## Runtime-health monitoring
 
 Runtime monitoring is enabled in `configs/settings.yaml`. It records evidence
@@ -422,9 +443,10 @@ not invoked by this Jenkinsfile.
 Jenkins uses `SCREENSHOT_RETENTION_MODE=evidence_only` and
 `VISUAL_STRICT_WARNINGS=false`. `CONTENT_CHANGED`, visual warnings, and
 report-only Runtime findings do not block the gray build; a visual failure
-does. The Python process status is captured with `returnStatus` and copied to
-`env.GRAY_PYTHON_EXIT_CODE`, so statuses 0, 1, and 2 remain available to the
-summary even when the monitor command is nonzero.
+does. Both platform branches assign `returnStatus` to one outer integer, which
+is copied with `String.valueOf` to `env.GRAY_PYTHON_EXIT_CODE` and validated as
+numeric before the summary. Statuses 0, 1, and 2 therefore remain available
+even when the monitor command is nonzero.
 
 Build and archived-artifact retention are separate:
 

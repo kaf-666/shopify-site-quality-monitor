@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -1008,11 +1009,21 @@ def capture_modules(
                 name,
             )
             if dynamic_region:
-                paths.update(
-                    audit_dynamic_region(
-                        locate(),
-                        dynamic_region,
-                        page_config=page_config,
+                dynamic_audit = audit_dynamic_region(
+                    locate(),
+                    dynamic_region,
+                    page_config=page_config,
+                )
+                paths.update(dynamic_audit)
+                print(
+                    "      dynamic_structure="
+                    + json.dumps(
+                        dynamic_audit.get(
+                            "structural_diagnostics",
+                            {},
+                        ),
+                        ensure_ascii=False,
+                        sort_keys=True,
                     )
                 )
             results[name] = paths

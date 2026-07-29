@@ -104,11 +104,19 @@ class ScreenshotArtifactManager:
             f"{uuid.uuid4().hex}-{safe_type}.png"
         )
 
-    def compare(self, comparator, baseline, current, diff):
+    def compare(
+        self,
+        comparator,
+        baseline,
+        current,
+        diff,
+        **options,
+    ):
         return comparator(
             str(baseline),
             str(current),
             str(diff),
+            **options,
         )
 
     def capture_page(self, page, path, full_page=False):

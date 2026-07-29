@@ -155,6 +155,18 @@ def validate_dynamic_regions(errors, page_name, page_config):
                 f"{path}.strategy must be mask_content, layout_only, "
                 "or ignore_visual"
             )
+        region_type = region.get("region_type")
+        if region_type is not None and region_type not in (
+            "grid",
+            "product_grid",
+            "carousel",
+            "category_carousel",
+            "product_carousel",
+        ):
+            errors.append(
+                f"{path}.region_type must be grid, product_grid, "
+                "carousel, category_carousel, or product_carousel"
+            )
         module = region.get("module")
         selector = region.get("selector")
         if module is not None and module not in modules:
@@ -177,6 +189,54 @@ def validate_dynamic_regions(errors, page_name, page_config):
             )
         ):
             errors.append(f"{path}.masks must be CSS text values")
+
+
+def validate_size_tolerance(errors, page_name, page_config):
+    configured = page_config.get("size_tolerance")
+    if configured is None:
+        return
+    if not isinstance(configured, dict):
+        errors.append(
+            f"pages.{page_name}.size_tolerance must be a mapping"
+        )
+        return
+    direct = any(
+        key in configured
+        for key in ("width_px", "height_px", "ratio")
+    )
+    cases = {"page": configured} if direct else configured
+    for case, tolerance in cases.items():
+        path = f"pages.{page_name}.size_tolerance.{case}"
+        if not isinstance(tolerance, dict):
+            errors.append(f"{path} must be a mapping")
+            continue
+        for key in tolerance:
+            if key not in ("width_px", "height_px", "ratio"):
+                errors.append(f"{path}.{key} is not recognized")
+        for key in ("width_px", "height_px"):
+            value = tolerance.get(key)
+            if value is None:
+                continue
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or value < 0
+                or value > 20
+            ):
+                errors.append(
+                    f"{path}.{key} must be between 0 and 20"
+                )
+        ratio = tolerance.get("ratio")
+        if (
+            ratio is not None
+            and (
+                isinstance(ratio, bool)
+                or not isinstance(ratio, (int, float))
+                or ratio < 0
+                or ratio > 0.1
+            )
+        ):
+            errors.append(f"{path}.ratio must be between 0 and 0.1")
 
 
 def validate_artifact_settings(errors):
@@ -510,6 +570,7 @@ def validate_config(args):
             errors.append(f"pages.{page_name}.url is missing or invalid")
         validate_module_selectors(errors, page_name, page_config)
         validate_dynamic_regions(errors, page_name, page_config)
+        validate_size_tolerance(errors, page_name, page_config)
         raw_page_config = pages[page_name]
         validate_runtime_health(
             errors,

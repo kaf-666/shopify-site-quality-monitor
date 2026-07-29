@@ -1,6 +1,8 @@
 import errno
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +17,7 @@ from playwright_checks.artifacts.cleanup import (
     resolved_within,
 )
 from playwright_checks.artifacts.dynamic import (
+    audit_dynamic_region,
     classify_content_changes,
     content_snapshot,
     evaluate_structural_snapshot,
@@ -435,6 +438,26 @@ class ScreenshotArtifactManagerTests(unittest.TestCase):
         self.assertTrue(keep.exists())
         self.assertTrue(unrelated.exists())
 
+    def test_cleanup_module_executes_without_runpy_runtime_warning(self):
+        project_root = Path(__file__).resolve().parents[2]
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-W",
+                "error::RuntimeWarning",
+                "-m",
+                "playwright_checks.artifacts.cleanup",
+                "--help",
+            ],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertNotIn("RuntimeWarning", completed.stderr)
+
     def test_finalize_run_cleans_temp_and_writes_summary(self):
         manager = self.manager()
         manager.finalize_result(
@@ -587,6 +610,203 @@ class DynamicContentPolicyTests(unittest.TestCase):
                 self.assertEqual("failed", result["structural_status"])
                 self.assertIn(expected[name], result["structural_issues"])
 
+    def test_home_carousel_passes_with_only_some_items_visible(self):
+        visible_items = [self.item(0), self.item(1)]
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 600, "height": 240},
+                "containerHorizontalOverflow": True,
+                "pageHorizontalOverflow": False,
+                "itemCount": 8,
+                "visibleItemCount": 2,
+                "isCarousel": True,
+                "items": visible_items,
+            },
+            "mask_content",
+            {
+                "minimum_count": 1,
+                "check_image_visible": True,
+                "check_title_present": True,
+                "check_price_present": True,
+            },
+            region_type="product_carousel",
+        )
+
+        self.assertEqual("passed", result["structural_status"])
+        diagnostics = result["structural_diagnostics"]
+        self.assertEqual(8, diagnostics["matched_count"])
+        self.assertEqual(2, diagnostics["visible_count"])
+        self.assertEqual(6, diagnostics["hidden_count"])
+        self.assertTrue(diagnostics["is_carousel"])
+        self.assertEqual(2, diagnostics["valid_card_count"])
+
+    def test_wrong_home_item_selector_returns_full_diagnostics(self):
+        class FakeElement:
+            @staticmethod
+            def evaluate(_script, _options):
+                return {
+                    "visible": True,
+                    "rootRect": {
+                        "width": 800,
+                        "height": 220,
+                    },
+                    "containerHorizontalOverflow": True,
+                    "pageHorizontalOverflow": False,
+                    "itemCount": 0,
+                    "visibleItemCount": 0,
+                    "isCarousel": True,
+                    "items": [],
+                    "maskBoxes": [],
+                }
+
+        result = audit_dynamic_region(
+            FakeElement(),
+            {
+                "name": "collections",
+                "module": "collections",
+                "strategy": "mask_content",
+                "region_type": "category_carousel",
+                "item_selector": ".wrong-product-selector",
+            },
+            page_config={
+                "modules": {
+                    "collections": [
+                        "xpath",
+                        "(//*[contains(@class,'index-section')])[2]",
+                    ]
+                },
+                "layout_checks": {
+                    "collections": {
+                        "minimum_count": 1,
+                        "check_price_present": False,
+                    }
+                },
+            },
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "dynamic_region_item_selector_no_match",
+            result["structural_issues"],
+        )
+        diagnostics = result["structural_diagnostics"]
+        required = {
+            "region",
+            "region_selector",
+            "item_selector",
+            "minimum_count",
+            "matched_count",
+            "visible_count",
+            "hidden_count",
+            "image_success_count",
+            "image_total_count",
+            "is_carousel",
+            "audit_duration_ms",
+        }
+        self.assertTrue(required.issubset(diagnostics))
+        self.assertEqual("collections", diagnostics["region"])
+        self.assertEqual(
+            ".wrong-product-selector",
+            diagnostics["item_selector"],
+        )
+        self.assertTrue(
+            diagnostics["region_selector"].startswith("xpath=")
+        )
+        self.assertEqual(0, diagnostics["matched_count"])
+
+    def test_carousel_matched_zero_and_visible_zero_fail(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 600, "height": 200},
+                "itemCount": 0,
+                "visibleItemCount": 0,
+                "isCarousel": True,
+                "items": [],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "dynamic_region_item_selector_no_match",
+            result["structural_issues"],
+        )
+        self.assertIn(
+            "dynamic_region_no_visible_items",
+            result["structural_issues"],
+        )
+
+    def test_carousel_with_only_hidden_matches_fails_visibility(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 600, "height": 200},
+                "itemCount": 5,
+                "visibleItemCount": 0,
+                "isCarousel": True,
+                "items": [],
+            },
+            "mask_content",
+            {"minimum_count": 1},
+            region_type="category_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertNotIn(
+            "dynamic_region_item_selector_no_match",
+            result["structural_issues"],
+        )
+        self.assertIn(
+            "dynamic_region_no_visible_items",
+            result["structural_issues"],
+        )
+
+    def test_carousel_true_minimum_shortage_fails(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 600, "height": 200},
+                "itemCount": 2,
+                "visibleItemCount": 1,
+                "isCarousel": True,
+                "items": [self.item(0)],
+            },
+            "mask_content",
+            {"minimum_count": 3},
+            region_type="product_carousel",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "carousel_below_minimum_count",
+            result["structural_issues"],
+        )
+
+    def test_collection_grid_keeps_visible_count_rule(self):
+        result = evaluate_structural_snapshot(
+            {
+                "visible": True,
+                "rootRect": {"width": 600, "height": 200},
+                "itemCount": 8,
+                "visibleItemCount": 0,
+                "isCarousel": False,
+                "items": [],
+            },
+            "layout_only",
+            {"minimum_count": 1},
+            region_type="product_grid",
+        )
+
+        self.assertEqual("failed", result["structural_status"])
+        self.assertIn(
+            "product_grid_below_minimum_count",
+            result["structural_issues"],
+        )
+
     def test_dynamic_pixel_change_becomes_content_changed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "artifacts"
@@ -724,6 +944,72 @@ class DynamicContentPolicyTests(unittest.TestCase):
             self.assertEqual("content_changed", result["status"])
             self.assertEqual(1, result["content_mask_count"])
             self.assertFalse(result["retained"])
+
+    def test_case_size_tolerance_is_recorded_in_result(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "artifacts"
+            manager = ScreenshotArtifactManager(
+                "fixture",
+                "home",
+                viewport="desktop",
+                run_id="run",
+                site_config={
+                    "site": "fixture",
+                    "artifacts": {
+                        "screenshot_retention": {
+                            "mode": "evidence_only",
+                        }
+                    },
+                },
+                page_config={
+                    "size_tolerance": {
+                        "currency": {
+                            "width_px": 2,
+                            "height_px": 2,
+                            "ratio": 0.03,
+                        }
+                    }
+                },
+                root=root,
+            )
+            baseline = Path(temp_dir) / "baseline.png"
+            current = manager.temporary_path("currency", "current")
+            diff = manager.temporary_path("currency", "diff")
+            Image.new("RGB", (69, 34), (245, 245, 245)).save(
+                baseline
+            )
+            Image.new("RGB", (68, 34), (245, 245, 245)).save(
+                current
+            )
+
+            failures = process_results(
+                {
+                    "currency": {
+                        "baseline": str(baseline),
+                        "target_baseline": str(baseline),
+                        "legacy_baseline": None,
+                        "current": str(current),
+                        "diff": str(diff),
+                    }
+                },
+                "fixture",
+                "visual",
+                "home",
+                manager=manager,
+            )
+            result = get_results()[-1]
+
+            self.assertEqual([], failures)
+            self.assertEqual("passed", result["status"])
+            self.assertEqual([69, 34], list(result["baseline_size"]))
+            self.assertEqual([68, 34], list(result["current_size"]))
+            self.assertEqual(-1, result["width_delta"])
+            self.assertEqual(0, result["height_delta"])
+            self.assertTrue(result["normalized_for_compare"])
+            self.assertEqual(
+                "case_config",
+                result["applied_tolerance"]["source"],
+            )
 
     def test_structural_failure_cannot_be_content_changed(self):
         with tempfile.TemporaryDirectory() as temp_dir:

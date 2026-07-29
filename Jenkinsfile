@@ -28,6 +28,7 @@ pipeline {
         ALLOW_SIDE_EFFECT_FLOW = 'false'
         GRAY_PYTHON_EXIT_CODE = 'not_run'
         GRAY_SUMMARY_EXIT_CODE = 'not_run'
+        GRAY_PIPELINE_STATE_ERROR = 'false'
     }
 
     stages {
@@ -170,8 +171,9 @@ pipeline {
                     )
                 ]) {
                     script {
+                        int pythonExitCode
                         if (isUnix()) {
-                            def pythonExitCode = sh(
+                            pythonExitCode = sh(
                                 script: '''
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
@@ -180,18 +182,20 @@ pipeline {
                                 ''',
                                 returnStatus: true
                             )
-                            env.GRAY_PYTHON_EXIT_CODE =
-                                pythonExitCode.toString()
                         } else {
-                            def pythonExitCode = bat(
+                            pythonExitCode = bat(
                                 script: '''
                                     @.venv\\Scripts\\python.exe -u run_all.py --site mondressy_US --viewport desktop --page home
                                 ''',
                                 returnStatus: true
                             )
-                            env.GRAY_PYTHON_EXIT_CODE =
-                                pythonExitCode.toString()
                         }
+                        env.GRAY_PYTHON_EXIT_CODE =
+                            String.valueOf(pythonExitCode)
+                        echo(
+                            'Captured GRAY_PYTHON_EXIT_CODE=' +
+                            env.GRAY_PYTHON_EXIT_CODE
+                        )
                     }
                 }
             }
@@ -200,26 +204,38 @@ pipeline {
         stage('Print Runtime Summary') {
             steps {
                 script {
-                    int summaryExitCode
-                    if (isUnix()) {
-                        summaryExitCode = sh(
-                            returnStatus: true,
-                            script: '''
-                                .venv/bin/python -u \
-                                    -m playwright_checks.runtime.gray_summary \
-                                    --run-id "$VISUAL_RUN_ID" \
-                                    --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
-                            '''
+                    if (
+                        !(env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/)
+                    ) {
+                        env.GRAY_PIPELINE_STATE_ERROR = 'true'
+                        env.GRAY_SUMMARY_EXIT_CODE = '2'
+                        echo(
+                            'Pipeline state error: Python command output ' +
+                            'was produced, but its exit code was not captured.'
                         )
                     } else {
-                        summaryExitCode = bat(
-                            returnStatus: true,
-                            script: '''
-                                @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
-                            '''
-                        )
+                        int summaryExitCode
+                        if (isUnix()) {
+                            summaryExitCode = sh(
+                                returnStatus: true,
+                                script: '''
+                                    .venv/bin/python -u \
+                                        -m playwright_checks.runtime.gray_summary \
+                                        --run-id "$VISUAL_RUN_ID" \
+                                        --python-exit-code "$GRAY_PYTHON_EXIT_CODE"
+                                '''
+                            )
+                        } else {
+                            summaryExitCode = bat(
+                                returnStatus: true,
+                                script: '''
+                                    @.venv\\Scripts\\python.exe -u -m playwright_checks.runtime.gray_summary --run-id "%VISUAL_RUN_ID%" --python-exit-code "%GRAY_PYTHON_EXIT_CODE%"
+                                '''
+                            )
+                        }
+                        env.GRAY_SUMMARY_EXIT_CODE =
+                            String.valueOf(summaryExitCode)
                     }
-                    env.GRAY_SUMMARY_EXIT_CODE = "${summaryExitCode}"
                 }
             }
         }
@@ -291,8 +307,14 @@ pipeline {
         stage('Evaluate Result') {
             steps {
                 script {
-                    if (env.GRAY_PYTHON_EXIT_CODE == 'not_run') {
-                        error('Gray validation Python process did not run.')
+                    if (
+                        env.GRAY_PIPELINE_STATE_ERROR == 'true'
+                        || !(env.GRAY_PYTHON_EXIT_CODE ==~ /^[0-9]+$/)
+                    ) {
+                        error(
+                            'Pipeline state error: Python command output ' +
+                            'was produced, but its exit code was not captured.'
+                        )
                     }
                     if (env.GRAY_PYTHON_EXIT_CODE != '0') {
                         error(

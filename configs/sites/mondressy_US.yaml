@@ -105,19 +105,25 @@ pages:
       currency:
         - xpath
         - "//*[@id='wssccSelected']"
+    size_tolerance:
+      currency:
+        width_px: 2
+        height_px: 2
+        ratio: 0.03
     dynamic_regions:
       - name: collections
         module: collections
         strategy: mask_content
-        item_selector: ".grid__item.grid-product"
+        region_type: category_carousel
+        item_selector: ".grid__item"
         masks:
           - "img"
-          - ".grid-product__title"
-          - ".grid-product__price"
-          - ".grid-product__tag"
+          - ".collection-item__title"
+          - "[class*='collection'][class*='title']"
       - name: collections_1
         module: collections_1
         strategy: mask_content
+        region_type: product_carousel
         item_selector: ".grid__item.grid-product"
         masks:
           - "img"
@@ -133,7 +139,7 @@ pages:
         minimum_image_success_rate: 0.9
         check_horizontal_overflow: true
         check_title_present: true
-        check_price_present: true
+        check_price_present: false
       collections_1:
         minimum_count: 1
         check_overlap: true
@@ -179,6 +185,7 @@ pages:
       - name: product_grid
         module: product_grid
         strategy: layout_only
+        region_type: product_grid
         item_selector: ".grid__item.grid-product"
     layout_checks:
       product_grid:
