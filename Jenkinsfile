@@ -91,7 +91,7 @@ pipeline {
                     echo 'site_key=mondressy_US'
                     echo 'target_host=mondressy.com'
                     echo 'page=Home'
-                    echo 'viewport=desktop'
+                    echo 'viewports=desktop,mobile'
                     echo 'report_only=true'
                     echo 'runtime_exit_gate=false'
                     echo 'request_header_injection=route'
@@ -173,7 +173,7 @@ pipeline {
                                 script: '''
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
-                                        --viewport desktop \
+                                        --viewport all \
                                         --page home
                                 ''',
                                 returnStatus: true
@@ -183,7 +183,7 @@ pipeline {
                                 script: '''
                                     @.venv\\Scripts\\python.exe -u run_all.py ^
                                         --site mondressy_US ^
-                                        --viewport desktop ^
+                                        --viewport all ^
                                         --page home
                                 ''',
                                 returnStatus: true
