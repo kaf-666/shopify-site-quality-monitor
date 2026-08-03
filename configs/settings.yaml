@@ -60,6 +60,95 @@ viewports:
 visual:
   change_threshold: 0.005
   warning_threshold: 0.02
+  screenshot_policy:
+    default_purpose: gate
+    pages:
+      home:
+        global:
+          purpose: report_only
+          report_case: home_full_page
+        first_screen:
+          purpose: gate
+          report_case: home_first_screen
+        mobile_menu_open:
+          purpose: gate
+          viewports:
+            - mobile
+        header_1: structure_only
+        header_2: structure_only
+        banner: structure_only
+        collections: structure_only
+        collections_1: structure_only
+        user_btn: structure_only
+        cart_btn: structure_only
+        search_btn: structure_only
+        wishlist: structure_only
+        currency: structure_only
+      collection:
+        global:
+          purpose: report_only
+          report_case: collection_full_page
+        first_screen:
+          purpose: gate
+          report_case: collection_first_screen
+        filter_open:
+          purpose: gate
+          viewports:
+            - desktop
+        filter_drawer_open:
+          purpose: gate
+          viewports:
+            - mobile
+        product_grid: structure_only
+        filter: structure_only
+        pagination: structure_only
+      product:
+        global:
+          purpose: report_only
+          report_case: product_full_page
+        first_screen:
+          purpose: gate
+          report_case: product_first_screen
+        product_main: gate
+        variant_changed_state: gate
+        sticky_add_to_cart:
+          purpose: evidence_only
+          viewports:
+            - mobile
+        gallery: structure_only
+        info: structure_only
+        add_to_cart: structure_only
+        variant_0: structure_only
+        variant_1: structure_only
+        variant_2: structure_only
+  structure_regions:
+    home:
+      - name: banner
+        module: banner
+        strategy: layout_only
+        region_type: content
+      - name: collections
+        module: collections
+        strategy: layout_only
+        region_type: category_carousel
+      - name: collections_1
+        module: collections_1
+        strategy: layout_only
+        region_type: product_carousel
+    collection:
+      - name: product_grid
+        module: product_grid
+        strategy: layout_only
+        region_type: product_grid
+    product:
+      - name: gallery
+        module: gallery
+        strategy: layout_only
+        region_type: product_media
+      - name: info
+        module: info
+        strategy: layout_only
+        region_type: product_information
   stabilize_timeout: 10
   width_tolerance_px: 0
   # Shopify 页尾与异步区块偶发产生少量高度漂移；超过 25px 仍按结构变化失败。

@@ -241,6 +241,7 @@ def _visual_failure_count(results):
         if result.get("result_type", "visual") == "visual"
         and result.get("case") != "runtime"
         and result.get("status") in failure_statuses
+        and result.get("affects_exit_code", True)
     )
 
 

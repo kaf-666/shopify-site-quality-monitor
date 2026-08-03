@@ -28,6 +28,10 @@ class FakeContext:
     def module_locators_for_capture():
         return {}
 
+    @staticmethod
+    def locator(_key, default=None):
+        return default
+
 
 class ClosedFakePage:
     url = "https://fixture.test"
@@ -164,7 +168,8 @@ class RuntimePageIntegrationTests(unittest.TestCase):
                     "dom_check": [],
                     "dom_presence_check": [],
                     "check_plugins": [],
-                    "capture_plugins": {},
+                    "run_structure_checks": ([], []),
+                    "capture_readonly_panel": ({}, []),
                     "hide_dynamic_elements": None,
                     "stabilize_banner": None,
                     "capture_global_screenshot": {},
@@ -181,6 +186,9 @@ class RuntimePageIntegrationTests(unittest.TestCase):
                     "dom_check": [],
                     "dom_presence_check": [],
                     "check_product_count": [],
+                    "check_pagination": [],
+                    "run_structure_checks": ([], []),
+                    "capture_readonly_panel": ({}, []),
                     "hide_dynamic_elements": None,
                     "capture_global_screenshot": {},
                     "capture_first_screen": {},
@@ -200,6 +208,8 @@ class RuntimePageIntegrationTests(unittest.TestCase):
                     "check_product_content": [],
                     "check_add_to_cart": [],
                     "check_variant_count": None,
+                    "run_structure_checks": ([], []),
+                    "capture_product_main": {},
                     "hide_dynamic_elements": None,
                     "capture_global_screenshot": {},
                     "capture_first_screen": {},

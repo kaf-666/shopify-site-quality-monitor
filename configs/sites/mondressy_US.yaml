@@ -75,29 +75,29 @@ pages:
       - mondressy
     modules:
       header_1:
-        - xpath
-        - "(//*[contains(@class, 'header-group')])[1]"
+        - css
+        - "[id$='__announcement']"
       header_2:
-        - xpath
-        - "(//*[contains(@class, 'header-group')])[2]"
+        - css
+        - "[id$='__header']"
       banner:
-        - xpath
-        - "//*[contains(@class,'slideshow__slide') and contains(@class,'is-selected')]"
+        - css
+        - "[id$='__slideshow'] .slideshow__slide.is-selected"
       collections:
-        - xpath
-        - "(//*[contains(@class, 'shopify-section index-section')])[2]"
+        - css
+        - "[id*='__featured_collections2_']"
       collections_1:
-        - xpath
-        - "(//*[contains(@class, 'shopify-section index-section')])[3]"
+        - css
+        - "[id$='__featured-collection']"
       user_btn:
-        - xpath
-        - "//*[contains(@class, 'icon icon-user')]"
+        - css
+        - "#SiteHeader a[href='/account']"
       cart_btn:
-        - xpath
-        - "//*[contains(@class, 'icon icon-bag-minimal')]"
+        - css
+        - "#SiteHeader a[aria-controls='CartDrawer']"
       search_btn:
-        - xpath
-        - "//*[contains(@class, 'site-nav small--hide')]"
+        - css
+        - "#SiteHeader .site-nav.small--hide .js-search-header"
     plugins:
       wishlist:
         - xpath
@@ -105,12 +105,28 @@ pages:
       currency:
         - xpath
         - "//*[@id='wssccSelected']"
+    readonly_interactions:
+      mobile_menu:
+        capture_target: panel
+        trigger:
+          - css
+          - ".js-drawer-open-nav, button[aria-controls='NavDrawer'], [data-drawer-open='NavDrawer']"
+        panel:
+          - css
+          - "#NavDrawer, [id*='NavDrawer']"
+        close:
+          - css
+          - "#NavDrawer .drawer__close-button, #NavDrawer button[aria-label*='Close']"
     size_tolerance:
       currency:
         width_px: 2
         height_px: 2
         ratio: 0.03
     dynamic_regions:
+      - name: banner
+        module: banner
+        strategy: layout_only
+        region_type: carousel
       - name: collections
         module: collections
         strategy: mask_content
@@ -153,7 +169,7 @@ pages:
       modules:
         search_btn:
           - css
-          - ".js-search-header.medium-up--hide"
+          - "#SiteHeader .js-search-header.medium-up--hide"
 
   collection:
     url: https://mondressy.com/collections/wedding-guest-dresses
@@ -170,8 +186,8 @@ pages:
     expected_count: 40
     modules:
       product_grid:
-        - xpath
-        - "//*[contains(@id,'shopify-section-template-color_collection')]"
+        - css
+        - "#CollectionAjaxContent .collection-grid__wrapper > .grid.grid--uniform"
       filter:
         - xpath
         - "(//*[contains(@class,'collection-filter')])[1]"
@@ -181,6 +197,8 @@ pages:
     product_card:
       - css
       - ".grid__item.grid-product"
+    readonly_interaction_skip_reasons:
+      filter: native_select_no_readonly_panel
     dynamic_regions:
       - name: product_grid
         module: product_grid
@@ -222,6 +240,10 @@ pages:
     require_reviews: false
     monitoring_product:
       stable: true
+    variant_check:
+      enabled: true
+      option_name: Color
+      option_value: Sky Blue
     modules:
       gallery:
         - xpath

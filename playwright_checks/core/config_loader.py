@@ -231,6 +231,24 @@ def _deep_merge(base, override):
     return merged
 
 
+def _merge_named_regions(defaults, overrides):
+    merged = []
+    positions = {}
+    for region in list(defaults or []) + list(overrides or []):
+        if not isinstance(region, dict):
+            merged.append(copy.deepcopy(region))
+            continue
+        key = region.get("name") or region.get("module")
+        if key and key in positions:
+            index = positions[key]
+            merged[index] = _deep_merge(merged[index], region)
+            continue
+        if key:
+            positions[key] = len(merged)
+        merged.append(copy.deepcopy(region))
+    return merged
+
+
 def get_page_config(page, site_config=None, viewport=None):
     config = site_config if isinstance(site_config, dict) else load_site_config(site_config)
     pages = config.get("pages", {})
@@ -247,6 +265,16 @@ def get_page_config(page, site_config=None, viewport=None):
 
     for reserved in ("desktop", "mobile", "tablet"):
         page_config.pop(reserved, None)
+
+    region_defaults = (
+        ((load_settings().get("visual") or {}).get("structure_regions") or {})
+        .get(page, [])
+    )
+    if region_defaults:
+        page_config["dynamic_regions"] = _merge_named_regions(
+            region_defaults,
+            page_config.get("dynamic_regions", []),
+        )
 
     if "url" not in page_config:
         raise KeyError(f"Page {page!r} is missing url in {config.get('_config_path')}")

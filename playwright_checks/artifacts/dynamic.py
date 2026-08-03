@@ -216,9 +216,30 @@ def audit_dynamic_region(element, region, page_config=None):
                     height: rect.height,
                 };
             };
-            const items = options.itemSelector
+            let items = options.itemSelector
                 ? Array.from(root.querySelectorAll(options.itemSelector))
                 : [];
+            if (!items.length && options.regionType.endsWith('carousel')) {
+                const candidateSelectors = [
+                    '.swiper-slide',
+                    '.flickity-slider > *',
+                    '.slick-slide',
+                    '[class*="product-card"]',
+                    '[class*="collection-card"]',
+                    '.grid__item',
+                    '[class*="grid-item"]',
+                    ':scope > *'
+                ];
+                for (const selector of candidateSelectors) {
+                    const candidates = Array.from(
+                        root.querySelectorAll(selector)
+                    );
+                    if (candidates.length) {
+                        items = candidates;
+                        break;
+                    }
+                }
+            }
             const rootRect = rectOf(root);
             const visibleWithinRoot = (node) => {
                 if (!visible(node)) return false;
@@ -315,11 +336,23 @@ def audit_dynamic_region(element, region, page_config=None):
                         [title, titleSource] = selected;
                     }
                 } else {
-                    title = configuredTitleText || textOf(productTitle);
+                    title = (
+                        configuredTitleText
+                        || textOf(productTitle)
+                        || linkText
+                        || ariaLabel
+                        || imageAlt
+                    );
                     if (configuredTitleText) {
                         titleSource = 'configured_title_selector';
-                    } else if (title) {
+                    } else if (textOf(productTitle)) {
                         titleSource = 'product_title_selector';
+                    } else if (linkText) {
+                        titleSource = 'link_text';
+                    } else if (ariaLabel) {
+                        titleSource = 'aria_label';
+                    } else if (imageAlt) {
+                        titleSource = 'image_alt';
                     }
                 }
                 return {
@@ -465,7 +498,13 @@ def evaluate_structural_snapshot(
         title_source = None
     is_category_carousel = normalized_type == "category_carousel"
     is_product_carousel = normalized_type == "product_carousel"
-    count_rules_enabled = (
+    item_region = normalized_type in (
+        "grid",
+        "product_grid",
+        "category_carousel",
+        "product_carousel",
+    )
+    count_rules_enabled = item_region and (
         strategy == "layout_only"
         or checks.get("minimum_count") is not None
     )
@@ -516,15 +555,28 @@ def evaluate_structural_snapshot(
         ):
             issues.append("product_card_heights_inconsistent")
         expected_columns = checks.get("expected_columns")
+        row_counts = _row_counts(rects)
+        diagnostics["row_counts"] = row_counts
         if expected_columns is not None and any(
             count != int(expected_columns)
-            for count in _row_counts(rects)[:-1]
+            for count in row_counts[:-1]
         ):
             issues.append("product_grid_column_count_unexpected")
-        elif checks.get("check_columns", True):
-            full_rows = _row_counts(rects)[:-1]
+        elif checks.get("check_columns", False):
+            full_rows = row_counts[:-1]
             if full_rows and len(set(full_rows)) > 1:
                 issues.append("product_grid_column_count_unexpected")
+        if (
+            normalized_type == "product_grid"
+            and checks.get("check_responsive_columns", True)
+            and row_counts
+        ):
+            maximum_columns = max(row_counts)
+            root_width = float(root.get("width", 0) or 0)
+            if root_width >= 900 and maximum_columns < 2:
+                issues.append("product_grid_too_few_desktop_columns")
+            if root_width <= 600 and maximum_columns > 2:
+                issues.append("product_grid_too_many_mobile_columns")
         if is_carousel:
             if is_category_carousel:
                 valid_cards = [

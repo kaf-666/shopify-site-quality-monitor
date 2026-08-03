@@ -11,6 +11,10 @@ from playwright_checks.core.config_loader import load_settings
 from playwright_checks.core.paths import current_run_id, relative_to_project
 from playwright_checks.core.test_results import add_result
 from playwright_checks.core.viewport import get_current_viewport_name
+from playwright_checks.core.visual_policy import (
+    purpose_affects_exit_code,
+    screenshot_case_policy,
+)
 
 
 def _visual_setting(name, default):
@@ -636,6 +640,13 @@ def _finalize_visual_artifacts(
     details,
     retention_status=None,
 ):
+    policy = screenshot_case_policy(
+        manager.page,
+        name,
+        viewport=manager.viewport,
+        site_config=manager.site_config,
+        page_config=manager.page_config,
+    )
     values, retention = manager.finalize_result(
         name,
         retention_status or visual_status,
@@ -648,9 +659,16 @@ def _finalize_visual_artifacts(
     )
     merged = dict(details or {})
     merged.update(retention)
-    merged["affects_exit_code"] = (
-        visual_status == "failed"
-        or (visual_status == "warning" and STRICT_WARNINGS)
+    merged.update(
+        {
+            "screenshot_purpose": policy["purpose"],
+            "source_case": name,
+        }
+    )
+    merged["affects_exit_code"] = purpose_affects_exit_code(
+        policy["purpose"],
+        visual_status,
+        strict_warnings=STRICT_WARNINGS,
     )
     return values, merged
 
@@ -668,7 +686,15 @@ def _add_failed_result(
     details=None,
 ):
     print(f"FAIL [{name}] {error}")
-    failures.append(f"visual [{name}] {error}")
+    policy = screenshot_case_policy(
+        manager.page,
+        name,
+        viewport=manager.viewport,
+        site_config=manager.site_config,
+        page_config=manager.page_config,
+    )
+    if purpose_affects_exit_code(policy["purpose"], "failed"):
+        failures.append(f"visual [{name}] {error}")
     result_paths, result_details = _finalize_visual_artifacts(
         manager,
         name,
@@ -685,7 +711,7 @@ def _add_failed_result(
             site,
             suite,
             page,
-            name,
+            (paths or {}).get("report_case", policy["report_case"]),
             "failed",
             result_paths,
             error=error,
@@ -708,6 +734,17 @@ def process_results(
     )
 
     for name, paths in results.items():
+        policy = screenshot_case_policy(
+            manager.page,
+            name,
+            viewport=manager.viewport,
+            site_config=manager.site_config,
+            page_config=manager.page_config,
+        )
+        result_case = (paths or {}).get(
+            "report_case",
+            policy["report_case"],
+        )
         if paths is None or paths.get("error"):
             error = paths.get("error") if paths else "capture failed"
             _add_failed_result(
@@ -744,6 +781,59 @@ def process_results(
             name,
         )
 
+        if policy["purpose"] in ("structure_only", "evidence_only"):
+            if (
+                policy["purpose"] == "structure_only"
+                and structural_status != "passed"
+            ):
+                error = (
+                    "structural checks failed: "
+                    + ", ".join(structural_issues)
+                )
+                _add_failed_result(
+                    site,
+                    suite,
+                    page,
+                    result_case,
+                    paths,
+                    error,
+                    failures,
+                    manager,
+                    retention_status="failed",
+                    details={
+                        "structural_status": structural_status,
+                        "structural_issues": structural_issues,
+                        "structural_diagnostics": structural_diagnostics,
+                        "pixel_compare_skipped": True,
+                    },
+                )
+                continue
+            result_paths, result_details = _finalize_visual_artifacts(
+                manager,
+                name,
+                "passed",
+                paths,
+                {
+                    **capture_metadata(paths),
+                    "structural_status": structural_status,
+                    "structural_issues": structural_issues,
+                    "structural_diagnostics": structural_diagnostics,
+                    "pixel_compare_skipped": True,
+                },
+            )
+            add_result(
+                build_result(
+                    site,
+                    suite,
+                    page,
+                    result_case,
+                    "passed",
+                    result_paths,
+                    details=result_details,
+                )
+            )
+            continue
+
         if not os.path.exists(base) and dynamic_strategy not in (
             "ignore_visual",
             "layout_only",
@@ -764,7 +854,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     paths,
                     error,
                     failures,
@@ -796,7 +886,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "initialized",
                     result_paths,
                     ratio=0.0,
@@ -815,7 +905,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     paths,
                     error,
                     failures,
@@ -847,7 +937,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "passed",
                     result_paths,
                     details=result_details,
@@ -919,7 +1009,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "content_changed",
                     result_paths,
                     details=result_details,
@@ -949,7 +1039,7 @@ def process_results(
             try:
                 compare_base, compare_cur = _masked_compare_images(
                     manager,
-                    name,
+                    result_case,
                     paths,
                     mask_boxes,
                     paths.get("content_mask_coordinate_size"),
@@ -959,7 +1049,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     paths,
                     (
                         "dynamic content mask preparation failed: "
@@ -1017,7 +1107,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "content_changed",
                     result_paths,
                     ratio=raw_content_ratio,
@@ -1040,7 +1130,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "passed",
                     result_paths,
                     ratio=ratio,
@@ -1057,10 +1147,11 @@ def process_results(
                 f"{baseline_size} -> {current_size}; "
                 "baseline was not updated"
             )
-            failures.append(
-                f"visual [{name}] size changed "
-                f"{baseline_size} -> {current_size}"
-            )
+            if purpose_affects_exit_code(policy["purpose"], "failed"):
+                failures.append(
+                    f"visual [{name}] size changed "
+                    f"{baseline_size} -> {current_size}"
+                )
             result_paths, result_details = _finalize_visual_artifacts(
                 manager,
                 name,
@@ -1073,7 +1164,7 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "failed",
                     result_paths,
                     ratio=ratio,
@@ -1099,21 +1190,27 @@ def process_results(
                     site,
                     suite,
                     page,
-                    name,
+                    result_case,
                     "warning",
                     result_paths,
                     ratio=ratio,
                     details=result_details,
                 )
             )
-            if STRICT_WARNINGS:
+            if purpose_affects_exit_code(
+                policy["purpose"],
+                "warning",
+                strict_warnings=STRICT_WARNINGS,
+            ):
                 failures.append(f"visual [{name}] warning {ratio:.2%}")
             continue
 
         print(f"FAIL [{name}] changed {ratio:.2%}")
-        failures.append(
-            f"visual [{name}] diff {ratio:.2%} exceeds {CHANGE_THRESHOLD:.2%}"
-        )
+        if purpose_affects_exit_code(policy["purpose"], "failed"):
+            failures.append(
+                f"visual [{name}] diff {ratio:.2%} "
+                f"exceeds {CHANGE_THRESHOLD:.2%}"
+            )
         result_paths, result_details = _finalize_visual_artifacts(
             manager,
             name,
@@ -1126,7 +1223,7 @@ def process_results(
                 site,
                 suite,
                 page,
-                name,
+                result_case,
                 "failed",
                 result_paths,
                 ratio=ratio,

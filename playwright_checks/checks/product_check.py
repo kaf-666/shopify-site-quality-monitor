@@ -1,19 +1,17 @@
-import os
 import sys
 import time
 
-import numpy as np
-from PIL import Image
-
 from playwright_checks.checks.context import PageCheckContext
-from playwright_checks.artifacts.screenshot_manager import safe_move
 from playwright_checks.core.driver import close_browser, init_browser
 from playwright_checks.core.test_results import (
     add_result,
     clear_results,
     write_results,
 )
-from playwright_checks.core.viewport import get_current_viewport_name
+from playwright_checks.core.viewport import (
+    get_current_viewport_name,
+    is_mobile_viewport,
+)
 from playwright_checks.pages.product_page import ProductPage
 from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.runtime.session import (
@@ -40,6 +38,7 @@ from playwright_checks.utils.waits import (
     selector_for,
 )
 from playwright_checks.utils.visual import build_result, process_results
+from playwright_checks.utils.structure import run_structure_checks
 
 
 SUITE = "visual"
@@ -61,18 +60,278 @@ def check_add_to_cart(page_model):
     failures = []
 
     try:
-        button = page_model.module("add_to_cart")
-        enabled = button.is_enabled()
-        print(f"enabled={enabled}")
-
-        if not enabled:
-            failures.append("Add To Cart button is disabled")
+        button = locate_ready_add_to_cart(page_model)
+        state = add_to_cart_button_state(button)
+        print(format_button_state(state))
+        if not state.get("ready"):
+            failures.append(
+                "Add To Cart button is not ready: "
+                + format_button_state(state)
+            )
 
     except Exception as e:
         print(f"FAIL {e}")
         failures.append(f"Add To Cart state error: {e}")
 
     return failures
+
+
+def product_main_target(page_model):
+    configured = page_model.config.get("product_main")
+    if configured:
+        return locate_visible_content(page_model.page, configured)[0]
+
+    gallery = page_model.module("gallery")
+    info = page_model.module("info")
+    gallery_handle = gallery.element_handle()
+    info_handle = info.element_handle()
+    common = page_model.page.evaluate_handle(
+        """
+        (nodes) => {
+            let current = nodes.gallery;
+            while (current && !current.contains(nodes.info)) {
+                current = current.parentElement;
+            }
+            if (!current || ['BODY', 'HTML'].includes(current.tagName)) {
+                return null;
+            }
+            return current;
+        }
+        """,
+        {"gallery": gallery_handle, "info": info_handle},
+    )
+    target = common.as_element()
+    if target is None:
+        common.dispose()
+        raise AssertionError("product_main common container not found")
+    return target
+
+
+def product_main_snapshot(page_model, target):
+    gallery = page_model.module("gallery").element_handle()
+    info = page_model.module("info").element_handle()
+    add_to_cart = locate_ready_add_to_cart(page_model).element_handle()
+    return target.evaluate(
+        """
+        (root, nodes) => {
+            const rectOf = (node) => {
+                const rect = node.getBoundingClientRect();
+                return {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom,
+                    width: rect.width,
+                    height: rect.height,
+                };
+            };
+            const visible = (node) => {
+                const rect = node.getBoundingClientRect();
+                const style = window.getComputedStyle(node);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden'
+                    && style.opacity !== '0';
+            };
+            const rootRect = rectOf(root);
+            const relativeBox = (node, boundary) => {
+                const rect = node.getBoundingClientRect();
+                const boundaryRect = boundary
+                    ? boundary.getBoundingClientRect()
+                    : rootRect;
+                return {
+                    left: Math.max(
+                        0,
+                        rect.left - rootRect.left,
+                        boundaryRect.left - rootRect.left
+                    ),
+                    top: Math.max(
+                        0,
+                        rect.top - rootRect.top,
+                        boundaryRect.top - rootRect.top
+                    ),
+                    right: Math.min(
+                        rootRect.width,
+                        rect.right - rootRect.left,
+                        boundaryRect.right - rootRect.left
+                    ),
+                    bottom: Math.min(
+                        rootRect.height,
+                        rect.bottom - rootRect.top,
+                        boundaryRect.bottom - rootRect.top
+                    ),
+                };
+            };
+            const galleryDynamicNodes = [
+                ...nodes.gallery.querySelectorAll('img, picture, video')
+            ];
+            const infoDynamicNodes = [
+                ...nodes.info.querySelectorAll([
+                    '.product-single__title',
+                    '.product__title',
+                    'h1',
+                    '.price',
+                    '[class*="price"]',
+                    '[class*="inventory"]',
+                    '[class*="review"]',
+                    '[class*="countdown"]'
+                ].join(','))
+            ];
+            const images = Array.from(
+                nodes.gallery.querySelectorAll('img')
+            ).filter(visible);
+            const readyImages = images.filter((image) => (
+                image.complete
+                && image.naturalWidth > 0
+                && image.naturalHeight > 0
+            ));
+            const mainImage = readyImages[0] || images[0] || null;
+            const mainRect = mainImage ? mainImage.getBoundingClientRect() : null;
+            const renderedRatio = mainRect && mainRect.height
+                ? mainRect.width / mainRect.height
+                : null;
+            const naturalRatio = mainImage && mainImage.naturalHeight
+                ? mainImage.naturalWidth / mainImage.naturalHeight
+                : null;
+            return {
+                root: rectOf(root),
+                gallery: rectOf(nodes.gallery),
+                info: rectOf(nodes.info),
+                addToCart: rectOf(nodes.addToCart),
+                galleryVisible: visible(nodes.gallery),
+                infoVisible: visible(nodes.info),
+                addToCartVisible: visible(nodes.addToCart),
+                imageCount: images.length,
+                readyImageCount: readyImages.length,
+                renderedRatio,
+                naturalRatio,
+                pageHorizontalOverflow:
+                    document.documentElement.scrollWidth
+                        > document.documentElement.clientWidth + 2,
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                maskBoxes: [
+                    ...galleryDynamicNodes.filter(visible).map(
+                        (node) => relativeBox(node, nodes.gallery)
+                    ),
+                    ...infoDynamicNodes.filter(visible).map(
+                        (node) => relativeBox(node, nodes.info)
+                    ),
+                ].filter(
+                    (box) => box.right > box.left && box.bottom > box.top
+                ),
+            };
+        }
+        """,
+        {"gallery": gallery, "info": info, "addToCart": add_to_cart},
+    )
+
+
+def product_main_issues(state):
+    issues = []
+    root = state.get("root") or {}
+    gallery = state.get("gallery") or {}
+    info = state.get("info") or {}
+    add_to_cart = state.get("addToCart") or {}
+    if root.get("width", 0) <= 0 or root.get("height", 0) <= 0:
+        issues.append("product_main_has_no_size")
+    if root.get("height", 0) > state.get("viewportHeight", 1) * 12:
+        issues.append("product_main_height_unreasonable")
+    if not state.get("galleryVisible") or not state.get("infoVisible"):
+        issues.append("product_main_section_missing")
+    if not state.get("addToCartVisible"):
+        issues.append("add_to_cart_not_visible")
+    if state.get("readyImageCount", 0) < 1:
+        issues.append("product_main_image_not_loaded")
+    if state.get("pageHorizontalOverflow"):
+        issues.append("page_horizontal_overflow")
+    for label, rect in (("gallery", gallery), ("info", info), ("add", add_to_cart)):
+        if (
+            rect.get("left", 0) < root.get("left", 0) - 2
+            or rect.get("right", 0) > root.get("right", 0) + 2
+            or rect.get("top", 0) < root.get("top", 0) - 2
+            or rect.get("bottom", 0) > root.get("bottom", 0) + 2
+        ):
+            issues.append(f"{label}_outside_product_main")
+    overlap_width = max(
+        0,
+        min(gallery.get("right", 0), info.get("right", 0))
+        - max(gallery.get("left", 0), info.get("left", 0)),
+    )
+    overlap_height = max(
+        0,
+        min(gallery.get("bottom", 0), info.get("bottom", 0))
+        - max(gallery.get("top", 0), info.get("top", 0)),
+    )
+    # Themes often stack the mobile gallery and information panels with a small
+    # negative margin. Treat that decorative seam as valid, while retaining a
+    # gate for material panel overlap.
+    if overlap_width > 32 and overlap_height > 32:
+        issues.append("gallery_and_info_overlap")
+    rendered = state.get("renderedRatio")
+    natural = state.get("naturalRatio")
+    if rendered and natural and max(rendered / natural, natural / rendered) > 2.5:
+        issues.append("product_main_image_severely_stretched")
+    return issues
+
+
+def capture_product_main(ctx, page_model, case_name="product_main"):
+    policy = ctx.screenshot_policy(case_name)
+    if not policy["enabled"]:
+        return {}
+    paths = build_paths(
+        ctx.current_dir,
+        ctx.baseline_dir,
+        ctx.diff_dir,
+        case_name,
+        legacy_baseline_dir=ctx.legacy_baseline_dir,
+    )
+    paths["report_case"] = policy["report_case"]
+    started = time.perf_counter()
+    try:
+        target = product_main_target(page_model)
+        prepare_for_screenshot(
+            page_model.page,
+            target,
+            site_config=ctx.site_config,
+            page_config=ctx.page_config,
+            require_reviews=False,
+            timeout=15,
+            settle_delay=0.5,
+            hide_dynamic=False,
+        )
+        target = product_main_target(page_model)
+        state = product_main_snapshot(page_model, target)
+        issues = product_main_issues(state)
+        ctx.artifact_manager.capture_element(target, paths["current"])
+        paths.update(
+            {
+                "capture_duration_ms": round(
+                    (time.perf_counter() - started) * 1000,
+                    2,
+                ),
+                "capture_attempts": 1,
+                "dynamic_strategy": "mask_content",
+                "content_mask_boxes": state.get("maskBoxes", []),
+                "content_mask_coordinate_size": {
+                    "width": state["root"]["width"],
+                    "height": state["root"]["height"],
+                },
+                "structural_status": "failed" if issues else "passed",
+                "structural_issues": issues,
+                "structural_diagnostics": state,
+            }
+        )
+        print(f"OK [{case_name}] product core captured")
+        return {case_name: paths}
+    except Exception as error:
+        print(f"FAIL [{case_name}] capture failed: {error}")
+        return {
+            case_name: {
+                "error": f"capture failed: {error}",
+                "report_case": policy["report_case"],
+            }
+        }
 
 
 def normalized_text(value):
@@ -246,91 +505,6 @@ def assert_add_to_cart_ready(button):
         )
 
 
-def image_has_visible_pixels(path, threshold=250):
-    with Image.open(path).convert("RGB") as image:
-        pixels = np.array(image)
-    return bool((pixels < threshold).any(axis=2).any())
-
-
-def capture_add_to_cart(ctx, page_model, attempts=3):
-    print("\nAdd To Cart screenshot")
-    name = "add_to_cart"
-    results = {}
-    paths = build_paths(
-        ctx.current_dir,
-        ctx.baseline_dir,
-        ctx.diff_dir,
-        name,
-        legacy_baseline_dir=ctx.legacy_baseline_dir,
-    )
-    capture_start = time.perf_counter()
-    last_error = None
-
-    for attempt in range(1, attempts + 1):
-        probe_path = ctx.temporary_path(
-            name,
-            f"add-to-cart-probe-{attempt}",
-        )
-
-        try:
-            target = locate_ready_add_to_cart(page_model)
-            prepare_for_screenshot(
-                page_model.page,
-                target,
-                site_config=ctx.site_config,
-                page_config=ctx.page_config,
-                require_reviews=ctx.page_config.get("require_reviews", True),
-                timeout=10,
-                settle_delay=0.5,
-                before_capture=assert_add_to_cart_ready,
-            )
-
-            target = locate_ready_add_to_cart(page_model, timeout=5000)
-            ctx.artifact_manager.capture_element(
-                target,
-                probe_path,
-            )
-
-            if not image_has_visible_pixels(probe_path):
-                raise Exception("Add To Cart screenshot is blank")
-
-            safe_move(probe_path, paths["current"])
-            paths["capture_duration_ms"] = round(
-                (time.perf_counter() - capture_start) * 1000,
-                2
-            )
-            paths["capture_attempts"] = attempt
-            results[name] = paths
-            print(
-                f"OK [{name}] "
-                f"{paths['capture_duration_ms']}ms "
-                f"attempts={paths['capture_attempts']}"
-            )
-            return results
-
-        except Exception as e:
-            last_error = e
-            ctx.artifact_manager.discard_temporary(probe_path)
-
-            if attempt < attempts:
-                print(
-                    f"      add_to_cart screenshot retry {attempt}/{attempts}: "
-                    f"{type(e).__name__}: {e}"
-                )
-                time.sleep(1)
-
-    print(f"FAIL [{name}] capture failed: {last_error}")
-    results[name] = {
-        "error": f"capture failed: {last_error}",
-        "capture_duration_ms": round(
-            (time.perf_counter() - capture_start) * 1000,
-            2
-        ),
-        "capture_attempts": attempts,
-    }
-    return results
-
-
 def locate_visible_content(page, locator_value, timeout=10000):
     end_time = time.time() + timeout / 1000
     elements = page.locator(selector_for(locator_value))
@@ -382,278 +556,260 @@ def check_variant_count(page_model):
     print(f"\nVariant count: {variants.count()}")
 
 
-def variant_candidate_sets(page_model):
-    candidate_sets = []
-
-    options = page_model.variant_gallery_options()
-    if options:
-        if options.count():
-            candidate_sets.append((options, "gallery option"))
-
-    candidate_sets.append((page_model.variant_inputs(), "variant input"))
-
-    return candidate_sets
-
-
-def visible_candidate_indices(candidates, limit=20):
-    indices = []
-    count = min(candidates.count(), limit)
-
-    for index in range(count):
-        candidate = candidates.nth(index)
-        try:
-            if candidate.is_visible(timeout=500):
-                indices.append(index)
-        except Exception:
-            continue
-
-    return indices
-
-
-def image_paths_close(path1, path2, threshold=0.005):
-    img1 = Image.open(path1).convert("RGB")
-    img2 = Image.open(path2).convert("RGB")
-
-    if img1.size != img2.size:
-        normalized = Image.new("RGB", img1.size, (255, 255, 255))
-        crop = img2.crop((
-            0,
-            0,
-            min(img1.width, img2.width),
-            min(img1.height, img2.height),
-        ))
-        normalized.paste(crop, (0, 0))
-        img2 = normalized
-
-    pixels1 = np.array(img1)
-    pixels2 = np.array(img2)
-    diff = np.abs(pixels1.astype(int) - pixels2.astype(int))
-    changed = (diff > 25).any(axis=2)
-    return changed.sum() / changed.size <= threshold
-
-
-def gallery_capture_target(page_model):
-    gallery = page_model.module("gallery")
-
-    if get_current_viewport_name() == "mobile":
-        slideshow = gallery.locator(".product-slideshow.flickity-enabled").first
-        try:
-            slideshow.wait_for(state="visible", timeout=1000)
-            box = slideshow.bounding_box()
-            if box and box["width"] > 0 and box["height"] > 0:
-                return slideshow
-        except Exception:
-            pass
-
-    return gallery
-
-
-def capture_gallery_variant(
-    ctx,
-    page_model,
-    results,
-    captured_paths,
-    captured_count,
-    variant_source,
-    candidate_index,
-):
-    name = f"variant_{captured_count}"
-    paths = build_paths(
-        ctx.current_dir,
-        ctx.baseline_dir,
-        ctx.diff_dir,
-        name,
-        legacy_baseline_dir=ctx.legacy_baseline_dir,
-    )
-    capture_start = time.perf_counter()
-
-    target = gallery_capture_target(page_model)
-    prepare_for_screenshot(
-        page_model.page,
-        target,
-        site_config=ctx.site_config,
-        page_config=ctx.page_config,
-        require_reviews=ctx.page_config.get("require_reviews", True),
-        timeout=10,
-        settle_delay=0.5,
-    )
-
-    target = gallery_capture_target(page_model)
-    probe_path = ctx.temporary_path(
-        name,
-        f"variant-probe-{candidate_index}",
-    )
-    ctx.artifact_manager.capture_element(
-        target,
-        probe_path,
-    )
-
-    if any(image_paths_close(path, probe_path) for path in captured_paths):
-        ctx.artifact_manager.discard_temporary(probe_path)
-        raise Exception(f"{variant_source} {candidate_index} duplicated screenshot")
-
-    safe_move(probe_path, paths["current"])
-    captured_paths.append(paths["current"])
-    paths["capture_duration_ms"] = round(
-        (time.perf_counter() - capture_start) * 1000,
-        2
-    )
-    paths["capture_attempts"] = 1
-    paths["variant_candidate_index"] = candidate_index
-    paths["variant_source"] = variant_source
-    results[name] = paths
-    print(f"OK Variant {captured_count} from {variant_source} {candidate_index}")
-
-    return captured_count + 1
-
-
-def gallery_slide_count(page_model):
+def gallery_runtime_state(page_model):
     gallery = page_model.module("gallery")
     return gallery.evaluate(
         """
         (gallery) => {
-            const slideshow =
-                gallery.querySelector('.product-slideshow.flickity-enabled') ||
-                gallery.querySelector('.flickity-enabled');
-            if (!slideshow || !window.Flickity || !window.Flickity.data) {
-                return 0;
-            }
-            const flickity = window.Flickity.data(slideshow);
-            return flickity ? flickity.slides.length : 0;
+            const visible = (node) => {
+                const rect = node.getBoundingClientRect();
+                const style = window.getComputedStyle(node);
+                return rect.width > 0 && rect.height > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const images = Array.from(gallery.querySelectorAll('img'))
+                .filter(visible);
+            const active = gallery.querySelector([
+                '.is-selected',
+                '.active',
+                '[aria-current="true"]',
+                '[aria-selected="true"]'
+            ].join(','));
+            const rect = gallery.getBoundingClientRect();
+            return {
+                currentSources: images.map((image) => (
+                    image.currentSrc || image.src || ''
+                )).filter(Boolean),
+                imageCount: images.length,
+                readyImageCount: images.filter((image) => (
+                    image.complete
+                    && image.naturalWidth > 0
+                    && image.naturalHeight > 0
+                )).length,
+                activeState: active ? [
+                    active.getAttribute('data-index') || '',
+                    active.getAttribute('aria-label') || '',
+                    active.className || ''
+                ].join('|') : '',
+                width: rect.width,
+                height: rect.height,
+                loading: Boolean(gallery.querySelector(
+                    '[aria-busy="true"], .loading, .is-loading'
+                )),
+                pageHorizontalOverflow:
+                    document.documentElement.scrollWidth
+                        > document.documentElement.clientWidth + 2,
+            };
         }
         """
     )
 
 
-def select_gallery_slide(page_model, slide_index):
-    gallery = page_model.module("gallery")
-    return gallery.evaluate(
+def variant_selected_state(variant):
+    return variant.evaluate(
         """
-        (gallery, slideIndex) => {
-            const slideshow =
-                gallery.querySelector('.product-slideshow.flickity-enabled') ||
-                gallery.querySelector('.flickity-enabled');
-            if (!slideshow || !window.Flickity || !window.Flickity.data) {
-                return false;
-            }
-            const flickity = window.Flickity.data(slideshow);
-            if (!flickity) {
-                return false;
-            }
-            flickity.select(slideIndex, false, true);
-            return true;
-        }
-        """,
-        slide_index,
+        (variant) => ({
+            checked: Boolean(variant.checked),
+            selected: Boolean(variant.selected),
+            ariaChecked: variant.getAttribute('aria-checked'),
+            ariaPressed: variant.getAttribute('aria-pressed'),
+            ariaSelected: variant.getAttribute('aria-selected'),
+            className: String(variant.className || ''),
+            value: String(variant.value || variant.getAttribute('value') || ''),
+        })
+        """
     )
 
 
-def capture_gallery_slides(ctx, page_model, results, captured_paths, captured_count, target_count):
-    slide_count = min(gallery_slide_count(page_model), 20)
+def state_is_selected(state):
+    return bool(
+        state.get("checked")
+        or state.get("selected")
+        or state.get("ariaChecked") == "true"
+        or state.get("ariaPressed") == "true"
+        or state.get("ariaSelected") == "true"
+        or any(
+            marker in str(state.get("className") or "").lower().split()
+            for marker in ("active", "selected", "is-selected", "checked")
+        )
+    )
 
-    if not slide_count:
-        return captured_count
 
-    print(f"Gallery slide candidates: {slide_count}")
-
-    for slide_index in range(slide_count):
-        if captured_count >= target_count:
-            break
-
+def variant_click_target(page_model, variant):
+    element_id = variant.get_attribute("id")
+    if element_id:
+        label = page_model.page.locator(f"label[for='{element_id}']").first
         try:
-            if not select_gallery_slide(page_model, slide_index):
-                raise Exception("Flickity slideshow is not available")
-            time.sleep(1)
-            captured_count = capture_gallery_variant(
-                ctx,
-                page_model,
-                results,
-                captured_paths,
-                captured_count,
-                "gallery slide",
-                slide_index,
-            )
-        except Exception as e:
-            print(f"WARN Gallery slide {slide_index} skipped: {e}")
+            if label.is_visible(timeout=500):
+                return label
+        except Exception:
+            pass
+    try:
+        return variant if variant.is_visible(timeout=500) else None
+    except Exception:
+        return None
 
-    return captured_count
+
+def record_variant_skip(ctx, reason):
+    policy = ctx.screenshot_policy("variant_changed_state")
+    print(f"SKIP [variant_changed_state] {reason}")
+    add_result(
+        build_result(
+            ctx.site,
+            ctx.suite,
+            ctx.page_name,
+            policy["report_case"],
+            "skipped",
+            None,
+            details={
+                "screenshot_purpose": policy["purpose"],
+                "skip_reason": reason,
+                "affects_exit_code": False,
+            },
+        )
+    )
 
 
 def test_variants(ctx, page_model):
-    print("\nVariant checks")
+    print("\nVariant changed-state check")
     results = {}
     failures = []
+    variants = page_model.variant_inputs()
+    variant_check = page_model.config.get("variant_check") or {}
+    deterministic = bool(variant_check.get("enabled"))
+    option_name = str(variant_check.get("option_name") or "").strip()
+    option_value = str(variant_check.get("option_value") or "").strip()
 
     try:
-        candidate_sets = variant_candidate_sets(page_model)
-
-        if not any(candidates.count() for candidates, _ in candidate_sets):
-            print("WARN variant not found")
-            failures.append("Variant not found")
-            return results, failures
-
-        target_count = 3
-        captured_count = 0
-        captured_paths = []
-
-        for candidates, variant_source in candidate_sets:
-            candidate_indices = visible_candidate_indices(candidates)
-
-            if not candidate_indices:
-                print(f"WARN {variant_source} has no visible candidates")
-                if variant_source == "gallery option":
-                    captured_count = capture_gallery_slides(
-                        ctx,
-                        page_model,
-                        results,
-                        captured_paths,
-                        captured_count,
-                        target_count,
-                    )
-                    if captured_count >= target_count:
-                        break
+        candidates = []
+        info_handle = page_model.module("info").element_handle()
+        for index in range(min(variants.count(), 100)):
+            variant = variants.nth(index)
+            try:
+                inside_product_info = variant.evaluate(
+                    "(variant, info) => Boolean(info && info.contains(variant))",
+                    info_handle,
+                )
+                if not inside_product_info:
+                    continue
+                if deterministic and (
+                    variant.get_attribute("name") != option_name
+                    or str(variant.get_attribute("value") or "")
+                    != option_value
+                ):
+                    continue
+                if not variant.is_enabled(timeout=500):
+                    continue
+                before_selected = variant_selected_state(variant)
+                if state_is_selected(before_selected):
+                    if deterministic:
+                        record_variant_skip(
+                            ctx,
+                            "configured_variant_already_selected",
+                        )
+                        return results, failures
+                    continue
+                click_target = variant_click_target(page_model, variant)
+                if click_target is None:
+                    continue
+                candidates.append((index, variant, click_target, before_selected))
+                if deterministic:
+                    break
+                if len(candidates) >= 20:
+                    break
+            except Exception:
                 continue
 
-            for candidate_index in candidate_indices:
-                if captured_count >= target_count:
-                    break
-
-                try:
-                    if candidate_index >= candidates.count():
-                        raise Exception(
-                            f"Variant candidate {candidate_index} does not exist"
-                        )
-
-                    variant = candidates.nth(candidate_index)
-                    variant.scroll_into_view_if_needed(timeout=10000)
-                    variant.click(force=True, timeout=10000)
-                    time.sleep(1)
-                    captured_count = capture_gallery_variant(
-                        ctx,
-                        page_model,
-                        results,
-                        captured_paths,
-                        captured_count,
-                        variant_source,
-                        candidate_index,
-                    )
-
-                except Exception as e:
-                    print(f"WARN Variant candidate {candidate_index} skipped: {e}")
-
-            if captured_count >= target_count:
-                break
-
-        if captured_count == 0:
-            failures.append("No distinct variant gallery screenshots captured")
-        elif captured_count < target_count:
-            failures.append(
-                f"Only {captured_count} distinct variant gallery screenshots captured"
+        if not candidates:
+            reason = (
+                "configured_variant_not_switchable"
+                if deterministic
+                else "no_switchable_enabled_variant"
             )
+            record_variant_skip(ctx, reason)
+            return results, failures
 
-    except Exception as e:
-        print(f"FAIL Variant checks failed: {e}")
-        failures.append(f"Variant checks failed: {e}")
+        last_reason = "variant_gallery_state_unchanged"
+        for index, variant, click_target, before_selected in candidates:
+            before_gallery = gallery_runtime_state(page_model)
+            click_target.scroll_into_view_if_needed(timeout=10000)
+            click_target.click(timeout=10000)
+
+            deadline = time.time() + 10
+            after_gallery = gallery_runtime_state(page_model)
+            while after_gallery.get("loading") and time.time() < deadline:
+                time.sleep(0.2)
+                after_gallery = gallery_runtime_state(page_model)
+
+            after_selected = variant_selected_state(variant)
+            selected_changed = (
+                not state_is_selected(before_selected)
+                and state_is_selected(after_selected)
+            )
+            gallery_changed = (
+                before_gallery.get("currentSources")
+                != after_gallery.get("currentSources")
+                or before_gallery.get("activeState")
+                != after_gallery.get("activeState")
+            )
+            gallery_ready = (
+                after_gallery.get("imageCount", 0) > 0
+                and after_gallery.get("readyImageCount", 0) > 0
+                and after_gallery.get("width", 0) > 0
+                and after_gallery.get("height", 0) > 0
+                and not after_gallery.get("loading")
+                and not after_gallery.get("pageHorizontalOverflow")
+            )
+            if not selected_changed:
+                last_reason = f"variant_{index}_selected_state_unchanged"
+                continue
+            if not gallery_changed:
+                last_reason = f"variant_{index}_gallery_state_unchanged"
+                continue
+            if not gallery_ready:
+                failures.append(
+                    f"Variant {index} gallery did not become ready"
+                )
+                return results, failures
+
+            results = capture_product_main(
+                ctx,
+                page_model,
+                case_name="variant_changed_state",
+            )
+            if results.get("variant_changed_state"):
+                results["variant_changed_state"]["variant_assertions"] = {
+                    "candidate_index": index,
+                    "deterministic": deterministic,
+                    "option_name": option_name if deterministic else None,
+                    "option_value": option_value if deterministic else None,
+                    "selected_state_changed": selected_changed,
+                    "gallery_state_changed": gallery_changed,
+                    "gallery_ready": gallery_ready,
+                }
+            if deterministic:
+                print(
+                    "OK configured variant "
+                    f"{option_name}={option_value} changed selection "
+                    "and gallery state"
+                )
+            else:
+                print(
+                    f"OK variant {index} changed selection and gallery state"
+                )
+            return results, failures
+
+        if deterministic:
+            failures.append(
+                "Configured variant "
+                f"{option_name}={option_value} failed: {last_reason}"
+            )
+        else:
+            record_variant_skip(ctx, last_reason)
+    except Exception as error:
+        print(f"FAIL Variant checks failed: {error}")
+        failures.append(f"Variant checks failed: {error}")
 
     return results, failures
 
@@ -725,48 +881,42 @@ def run():
         failures.extend(check_product_content(page_model))
         failures.extend(check_add_to_cart(page_model))
         check_variant_count(page_model)
+        structure_failures, _structure_results = run_structure_checks(
+            ctx,
+            page,
+        )
+        failures.extend(structure_failures)
+
+        product_main_results = capture_product_main(ctx, page_model)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         global_results = capture_global_screenshot(ctx, page)
         first_screen_results = capture_first_screen(ctx, page)
 
-        if ctx.page_config.get("reload_before_module_capture"):
-            print("Reloading product page before module capture")
-            page_model.open()
-            time.sleep(2)
-            page_model.wait_until_ready()
-            collect_runtime_health_fail_open(page_model.runtime)
-            hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
-
-        module_locators = ctx.module_locators_for_capture()
-        add_to_cart_locator = module_locators.pop("add_to_cart", None)
-        module_results = {}
-
-        if module_locators:
-            module_results.update(
-                capture_modules(
-                    page,
-                    module_locators,
-                    ctx.current_dir,
-                    ctx.baseline_dir,
-                    ctx.diff_dir,
-                    require_reviews=ctx.page_config.get("require_reviews", True),
-                    site_config=ctx.site_config,
-                    page_config=ctx.page_config,
-                    legacy_baseline_dir=ctx.legacy_baseline_dir,
-                    artifact_manager=getattr(
-                        ctx,
-                        "artifact_manager",
-                        None,
-                    ),
-                )
-            )
-
-        if add_to_cart_locator:
-            module_results.update(capture_add_to_cart(ctx, page_model))
+        print("Reloading product page before read-only variant selection")
+        page_model.open()
+        time.sleep(2)
+        page_model.wait_until_ready()
+        collect_runtime_health_fail_open(page_model.runtime)
 
         variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)
+
+        sticky_results = {}
+        sticky_locator = ctx.locator("sticky_add_to_cart")
+        if is_mobile_viewport() and sticky_locator:
+            sticky_results = capture_modules(
+                page,
+                {"sticky_add_to_cart": sticky_locator},
+                ctx.current_dir,
+                ctx.baseline_dir,
+                ctx.diff_dir,
+                require_reviews=False,
+                site_config=ctx.site_config,
+                page_config=ctx.page_config,
+                legacy_baseline_dir=ctx.legacy_baseline_dir,
+                artifact_manager=getattr(ctx, "artifact_manager", None),
+            )
 
         failures.extend(
             process_results(
@@ -788,7 +938,7 @@ def run():
         )
         failures.extend(
             process_results(
-                module_results,
+                product_main_results,
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
@@ -798,6 +948,15 @@ def run():
         failures.extend(
             process_results(
                 variant_results,
+                ctx.site,
+                ctx.suite,
+                ctx.page_name,
+                manager=getattr(ctx, "artifact_manager", None),
+            )
+        )
+        failures.extend(
+            process_results(
+                sticky_results,
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,

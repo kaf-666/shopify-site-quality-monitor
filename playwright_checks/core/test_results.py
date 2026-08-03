@@ -23,8 +23,8 @@ def get_results():
 
 
 def get_page_visual_status(site, viewport, page):
-    statuses = [
-        result.get("status")
+    relevant = [
+        result
         for result in _RESULTS
         if result.get("site") == site
         and result.get("viewport") == viewport
@@ -32,16 +32,24 @@ def get_page_visual_status(site, viewport, page):
         and result.get("result_type", "visual") == "visual"
         and result.get("case") != "runtime"
     ]
+    statuses = [result.get("status") for result in relevant]
+    gated_statuses = [
+        result.get("status")
+        for result in relevant
+        if result.get("affects_exit_code", False)
+    ]
     if not statuses:
         return "not_run"
-    if "failed" in statuses:
+    if "failed" in gated_statuses:
         return "failed"
-    if "warning" in statuses:
+    if "warning" in gated_statuses or "warning" in statuses:
         return "warning"
     if "content_changed" in statuses:
         return "content_changed"
     if statuses and all(status == "initialized" for status in statuses):
         return "initialized"
+    if statuses and all(status == "skipped" for status in statuses):
+        return "not_run"
     return "passed"
 
 

@@ -26,11 +26,10 @@ def init_browser(site_config=None):
         "PLAYWRIGHT_BROWSER_CHANNEL",
         browser_settings.get("channel", "chrome"),
     )
-    channel = (
-        None
-        if str(configured_channel or "").strip().lower() == "chromium"
-        else configured_channel
-    )
+    # Keep the explicit ``chromium`` channel. Modern Playwright uses it to
+    # launch the installed full Chromium build in new headless mode; mapping
+    # it to None instead requests the separate legacy headless-shell binary.
+    channel = configured_channel
     headed_override = os.environ.get("PLAYWRIGHT_HEADED")
     if "headed" in site_browser_settings:
         headless = not bool(browser_settings.get("headed", False))

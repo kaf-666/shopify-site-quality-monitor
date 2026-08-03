@@ -1074,9 +1074,10 @@ class DynamicContentPolicyTests(unittest.TestCase):
             result = get_results()[-1]
 
             self.assertEqual([], failures)
-            self.assertEqual("content_changed", result["status"])
+            self.assertEqual("passed", result["status"])
             self.assertFalse(result["affects_exit_code"])
             self.assertTrue(result["pixel_compare_skipped"])
+            self.assertEqual("structure_only", result["screenshot_purpose"])
             self.assertIsNone(result["ratio"])
             self.assertFalse(result["retained"])
             self.assertIsNone(result["current"])
@@ -1172,7 +1173,7 @@ class DynamicContentPolicyTests(unittest.TestCase):
                 },
                 page_config={
                     "size_tolerance": {
-                        "currency": {
+                        "tolerance_probe": {
                             "width_px": 2,
                             "height_px": 2,
                             "ratio": 0.03,
@@ -1182,8 +1183,8 @@ class DynamicContentPolicyTests(unittest.TestCase):
                 root=root,
             )
             baseline = Path(temp_dir) / "baseline.png"
-            current = manager.temporary_path("currency", "current")
-            diff = manager.temporary_path("currency", "diff")
+            current = manager.temporary_path("tolerance_probe", "current")
+            diff = manager.temporary_path("tolerance_probe", "diff")
             Image.new("RGB", (69, 34), (245, 245, 245)).save(
                 baseline
             )
@@ -1193,7 +1194,7 @@ class DynamicContentPolicyTests(unittest.TestCase):
 
             failures = process_results(
                 {
-                    "currency": {
+                    "tolerance_probe": {
                         "baseline": str(baseline),
                         "target_baseline": str(baseline),
                         "legacy_baseline": None,

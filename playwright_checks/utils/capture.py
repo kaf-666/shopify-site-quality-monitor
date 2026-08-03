@@ -264,10 +264,12 @@ def prepare_for_screenshot(
     timeout=10,
     settle_delay=1,
     before_capture=None,
+    hide_dynamic=True,
 ):
     scroll_to_center(element)
     disable_motion(page)
-    hide_dynamic_elements(page, site_config, page_config)
+    if hide_dynamic:
+        hide_dynamic_elements(page, site_config, page_config)
 
     if before_capture:
         before_capture(element)
@@ -283,7 +285,8 @@ def prepare_for_screenshot(
         time.sleep(settle_delay)
 
     disable_motion(page)
-    hide_dynamic_elements(page, site_config, page_config)
+    if hide_dynamic:
+        hide_dynamic_elements(page, site_config, page_config)
 
     if before_capture:
         before_capture(element)
@@ -725,7 +728,10 @@ def prepare_global_screenshot(
 
 
 def capture_global_screenshot(ctx, page, before_capture=None):
-    if not ctx.page_config.get("capture_global_screenshot"):
+    if (
+        not ctx.page_config.get("capture_global_screenshot")
+        or not ctx.case_is_captured("global")
+    ):
         return {}
 
     print("\nGlobal screenshots")
@@ -737,6 +743,7 @@ def capture_global_screenshot(ctx, page, before_capture=None):
         name,
         legacy_baseline_dir=ctx.legacy_baseline_dir,
     )
+    paths["report_case"] = ctx.screenshot_policy(name)["report_case"]
     capture_start = time.perf_counter()
 
     try:
@@ -821,7 +828,10 @@ def capture_global_screenshot(ctx, page, before_capture=None):
 
 
 def capture_first_screen(ctx, page, before_capture=None):
-    if not ctx.page_config.get("capture_first_screen"):
+    if (
+        not ctx.page_config.get("capture_first_screen")
+        or not ctx.case_is_captured("first_screen")
+    ):
         return {}
 
     print("\nViewport screenshots")
@@ -833,6 +843,7 @@ def capture_first_screen(ctx, page, before_capture=None):
         name,
         legacy_baseline_dir=ctx.legacy_baseline_dir,
     )
+    paths["report_case"] = ctx.screenshot_policy(name)["report_case"]
     capture_start = time.perf_counter()
 
     try:

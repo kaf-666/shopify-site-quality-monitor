@@ -45,6 +45,8 @@ from playwright_checks.utils.waits import (
     create_dirs,
 )
 from playwright_checks.utils.visual import build_result, process_results
+from playwright_checks.utils.readonly_interactions import capture_readonly_panel
+from playwright_checks.utils.structure import run_structure_checks
 
 
 SUITE = "visual"
@@ -55,11 +57,22 @@ def get_product_cards(page_model):
     return page_model.product_cards()
 
 
+def recover_interrupted_navigation(page_model, error):
+    if "Execution context was destroyed" not in str(error):
+        return False
+    print("collection navigation interrupted; waiting for page recovery")
+    page_model.page.wait_for_load_state("domcontentloaded", timeout=45000)
+    time.sleep(2)
+    page_model.wait_until_ready()
+    return True
+
+
 def scroll_to_load_all(page_model, timeout=10, max_scrolls=20):
     last_count = 0
     stable_count = 0
     end_time = time.time() + timeout
     cards = get_product_cards(page_model)
+    recoveries = 0
 
     for _ in range(max_scrolls):
         if time.time() > end_time:
@@ -68,20 +81,52 @@ def scroll_to_load_all(page_model, timeout=10, max_scrolls=20):
         try:
             current_count = cards.count()
         except PlaywrightError as e:
+            if recoveries < 2 and recover_interrupted_navigation(
+                page_model,
+                e,
+            ):
+                recoveries += 1
+                cards = get_product_cards(page_model)
+                continue
             print(f"product card count interrupted: {e}")
             return last_count
 
         if current_count == last_count:
             stable_count += 1
-            if stable_count >= 3:
-                return current_count
         else:
             stable_count = 0
             last_count = current_count
 
         try:
+            at_bottom = page_model.page.evaluate(
+                """
+                () => window.scrollY + window.innerHeight
+                    >= document.documentElement.scrollHeight - 4
+                """
+            )
+        except PlaywrightError as e:
+            if recoveries < 2 and recover_interrupted_navigation(
+                page_model,
+                e,
+            ):
+                recoveries += 1
+                cards = get_product_cards(page_model)
+                continue
+            print(f"scroll position interrupted: {e}")
+            return last_count
+        if stable_count >= 3 and at_bottom:
+            return current_count
+
+        try:
             page_model.page.evaluate("() => window.scrollBy(0, window.innerHeight)")
         except PlaywrightError as e:
+            if recoveries < 2 and recover_interrupted_navigation(
+                page_model,
+                e,
+            ):
+                recoveries += 1
+                cards = get_product_cards(page_model)
+                continue
             print(f"scroll interrupted: {e}")
             return last_count
 
@@ -155,6 +200,57 @@ def check_product_count(ctx, page_model):
             )
         )
 
+    return failures
+
+
+def check_pagination(page_model):
+    print("\nPagination structure")
+    failures = []
+    try:
+        pagination = page_model.module("pagination")
+        state = pagination.evaluate(
+            """
+            (root) => {
+                const rect = root.getBoundingClientRect();
+                const links = Array.from(root.querySelectorAll('a[href]'));
+                const hasPageNumber = Array.from(
+                    root.querySelectorAll('a, button, span')
+                ).some((node) => /^\\d+$/.test(
+                    String(node.textContent || '').trim()
+                ));
+                const hasNext = links.some((link) => (
+                    String(link.rel || '').toLowerCase().includes('next')
+                    || /next/i.test(String(
+                        link.getAttribute('aria-label')
+                        || link.textContent
+                        || ''
+                    ))
+                ));
+                return {
+                    width: rect.width,
+                    height: rect.height,
+                    left: rect.left,
+                    right: rect.right,
+                    viewportWidth: window.innerWidth,
+                    hasPageNumber,
+                    hasNext,
+                };
+            }
+            """
+        )
+        if state["width"] <= 0 or state["height"] <= 0:
+            failures.append("pagination has no visible size")
+        if not state["hasPageNumber"] and not state["hasNext"]:
+            failures.append("pagination has no page number or next link")
+        if state["left"] < -2 or state["right"] > state["viewportWidth"] + 2:
+            failures.append("pagination horizontally exceeds viewport")
+        if failures:
+            print(f"FAIL pagination: {', '.join(failures)}")
+        else:
+            print("OK pagination visible with navigation and no overflow")
+    except Exception as error:
+        failures.append(f"pagination structure error: {error}")
+        print(f"FAIL pagination structure: {error}")
     return failures
 
 
@@ -370,44 +466,27 @@ def run():
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
         failures.extend(check_product_count(ctx, page_model))
+        failures.extend(check_pagination(page_model))
+        structure_failures, _structure_results = run_structure_checks(
+            ctx,
+            page,
+        )
+        failures.extend(structure_failures)
+        filter_case = (
+            "filter_drawer_open" if is_mobile_viewport() else "filter_open"
+        )
+        filter_results, interaction_failures = capture_readonly_panel(
+            ctx,
+            page,
+            "filter",
+            filter_case,
+        )
+        failures.extend(interaction_failures)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
 
         global_results = capture_global_screenshot(ctx, page)
         first_screen_results = capture_first_screen(ctx, page)
-        module_results = capture_modules(
-            page,
-            ctx.module_locators_for_capture(),
-            ctx.current_dir,
-            ctx.baseline_dir,
-            ctx.diff_dir,
-            require_reviews=False,
-            site_config=ctx.site_config,
-            page_config=ctx.page_config,
-            legacy_baseline_dir=ctx.legacy_baseline_dir,
-            artifact_manager=getattr(ctx, "artifact_manager", None),
-        )
-        product_grid_policy = next(
-            (
-                region
-                for region in ctx.page_config.get(
-                    "dynamic_regions",
-                    [],
-                )
-                if region.get("name") == "product_grid"
-            ),
-            {},
-        )
-        if product_grid_policy.get("strategy") == "layout_only":
-            print(
-                "Collection product/hover pixel captures skipped: "
-                "product_grid uses layout_only"
-            )
-            product_results = {}
-            hover_results = {}
-        else:
-            product_results = capture_product_cards(ctx, page_model)
-            hover_results = capture_hover_cards(ctx, page_model)
 
         failures.extend(
             process_results(
@@ -429,32 +508,13 @@ def run():
         )
         failures.extend(
             process_results(
-                module_results,
+                filter_results,
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
                 manager=getattr(ctx, "artifact_manager", None),
             )
         )
-        failures.extend(
-            process_results(
-                product_results,
-                ctx.site,
-                ctx.suite,
-                ctx.page_name,
-                manager=getattr(ctx, "artifact_manager", None),
-            )
-        )
-        failures.extend(
-            process_results(
-                hover_results,
-                ctx.site,
-                ctx.suite,
-                ctx.page_name,
-                manager=getattr(ctx, "artifact_manager", None),
-            )
-        )
-
     except Exception as e:
         if page_model is not None:
             record_runtime_error_fail_open(

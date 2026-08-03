@@ -7,6 +7,10 @@ from playwright_checks.core.config_loader import (
     locator_map,
 )
 from playwright_checks.core.paths import page_paths
+from playwright_checks.core.visual_policy import (
+    case_is_captured,
+    screenshot_case_policy,
+)
 from playwright_checks.artifacts.screenshot_manager import (
     ScreenshotArtifactManager,
 )
@@ -47,7 +51,24 @@ class PageCheckContext:
             name: module_locator
             for name, module_locator in self.modules.items()
             if name not in self.capture_exclude
+            and self.case_is_captured(name)
         }
+
+    def screenshot_policy(self, case):
+        return screenshot_case_policy(
+            self.page_name,
+            case,
+            site_config=self.site_config,
+            page_config=self.page_config,
+        )
+
+    def case_is_captured(self, case):
+        return case_is_captured(
+            self.page_name,
+            case,
+            site_config=self.site_config,
+            page_config=self.page_config,
+        )
 
     def locator(self, key, default=None):
         value = self.page_config.get(key, default)

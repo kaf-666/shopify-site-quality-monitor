@@ -43,6 +43,8 @@ from playwright_checks.utils.waits import (
     locate_element,
 )
 from playwright_checks.utils.visual import build_result, process_results
+from playwright_checks.utils.readonly_interactions import capture_readonly_panel
+from playwright_checks.utils.structure import run_structure_checks
 
 
 SUITE = "visual"
@@ -57,9 +59,20 @@ def check_plugins(page_model):
         try:
             element = locate_element(page_model.page, locator)
             visible = element.is_visible()
-            print(f"OK {name} visible={visible}")
-            if not visible:
-                failures.append(f"plugin [{name}] visible=False")
+            box = element.bounding_box()
+            size_ok = bool(box and box["width"] > 0 and box["height"] > 0)
+            text_ok = True
+            if name == "currency":
+                text_ok = bool(element.inner_text(timeout=2000).strip())
+            print(
+                f"OK {name} visible={visible} size_ok={size_ok} "
+                f"text_ok={text_ok}"
+            )
+            if not visible or not size_ok or not text_ok:
+                failures.append(
+                    f"plugin [{name}] visible={visible}, "
+                    f"size_ok={size_ok}, text_ok={text_ok}"
+                )
         except Exception as e:
             print(f"FAIL {name} plugin error: {e}")
             failures.append(f"plugin [{name}] error: {e}")
@@ -368,8 +381,6 @@ def stabilize_banner(page, page_config=None):
                     const flkty = Flickity.data(el);
                     flkty.stopPlayer();
                     flkty.select(0, false, true);
-                    flkty.x = 0;
-                    flkty.positionSlider();
                     flkty.pausePlayer();
                 }
                 disableMotion(el);
@@ -465,19 +476,25 @@ def run():
         failures.extend(dom_check(page, page_model.modules))
         failures.extend(dom_presence_check(page, page_model.dom_presence))
         failures.extend(check_plugins(page_model))
-
-        plugin_results = capture_plugins(ctx, page_model)
+        stabilize_banner(page, ctx.page_config)
+        structure_failures, _structure_results = run_structure_checks(
+            ctx,
+            page,
+        )
+        failures.extend(structure_failures)
+        mobile_menu_results, interaction_failures = capture_readonly_panel(
+            ctx,
+            page,
+            "mobile_menu",
+            "mobile_menu_open",
+        )
+        failures.extend(interaction_failures)
 
         hide_dynamic_elements(page, ctx.site_config, ctx.page_config)
         stabilize_banner(page, ctx.page_config)
 
         def before_home_capture(capture_page):
             stabilize_banner(capture_page, ctx.page_config)
-
-        def before_home_module_capture_for_context(name, capture_page, element):
-            before_home_module_capture(
-                name, capture_page, element, ctx.page_config
-            )
 
         global_results = capture_global_screenshot(
             ctx,
@@ -488,19 +505,6 @@ def run():
             ctx,
             page,
             before_capture=before_home_capture,
-        )
-        module_results = capture_modules(
-            page,
-            ctx.module_locators_for_capture(),
-            ctx.current_dir,
-            ctx.baseline_dir,
-            ctx.diff_dir,
-            require_reviews=False,
-            site_config=ctx.site_config,
-            page_config=ctx.page_config,
-            before_capture=before_home_module_capture_for_context,
-            legacy_baseline_dir=ctx.legacy_baseline_dir,
-            artifact_manager=getattr(ctx, "artifact_manager", None),
         )
 
         failures.extend(
@@ -523,23 +527,13 @@ def run():
         )
         failures.extend(
             process_results(
-                module_results,
+                mobile_menu_results,
                 ctx.site,
                 ctx.suite,
                 ctx.page_name,
                 manager=getattr(ctx, "artifact_manager", None),
             )
         )
-        failures.extend(
-            process_results(
-                plugin_results,
-                ctx.site,
-                ctx.suite,
-                ctx.page_name,
-                manager=getattr(ctx, "artifact_manager", None),
-            )
-        )
-
     except Exception as e:
         if page_model is not None:
             record_runtime_error_fail_open(

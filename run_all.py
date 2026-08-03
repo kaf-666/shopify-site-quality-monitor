@@ -162,10 +162,14 @@ def validate_dynamic_regions(errors, page_name, page_config):
             "carousel",
             "category_carousel",
             "product_carousel",
+            "content",
+            "product_media",
+            "product_information",
         ):
             errors.append(
                 f"{path}.region_type must be grid, product_grid, "
-                "carousel, category_carousel, or product_carousel"
+                "carousel, category_carousel, product_carousel, content, "
+                "product_media, or product_information"
             )
         module = region.get("module")
         selector = region.get("selector")
@@ -189,6 +193,80 @@ def validate_dynamic_regions(errors, page_name, page_config):
             )
         ):
             errors.append(f"{path}.masks must be CSS text values")
+
+
+def validate_readonly_interactions(errors, page_name, page_config):
+    interactions = page_config.get("readonly_interactions")
+    if interactions is None:
+        return
+    if not isinstance(interactions, dict):
+        errors.append(
+            f"pages.{page_name}.readonly_interactions must be a mapping"
+        )
+        return
+    for name, config in interactions.items():
+        path = f"pages.{page_name}.readonly_interactions.{name}"
+        if not isinstance(config, dict):
+            errors.append(f"{path} must be a mapping")
+            continue
+        for key in ("trigger", "panel", "close"):
+            validate_selector(errors, f"{path}.{key}", config.get(key))
+        if config.get("bottom_action") is not None:
+            validate_selector(
+                errors,
+                f"{path}.bottom_action",
+                config.get("bottom_action"),
+            )
+        if config.get("dismiss_obstruction") is not None:
+            validate_selector(
+                errors,
+                f"{path}.dismiss_obstruction",
+                config.get("dismiss_obstruction"),
+            )
+
+
+def validate_screenshot_policy(errors, settings):
+    from playwright_checks.core.visual_policy import VALID_SCREENSHOT_PURPOSES
+
+    policy = ((settings.get("visual") or {}).get("screenshot_policy"))
+    if policy is None:
+        return
+    if not isinstance(policy, dict):
+        errors.append("visual.screenshot_policy must be a mapping")
+        return
+    default = policy.get("default_purpose", "gate")
+    if default not in VALID_SCREENSHOT_PURPOSES:
+        errors.append(
+            "visual.screenshot_policy.default_purpose must be one of "
+            + ", ".join(VALID_SCREENSHOT_PURPOSES)
+        )
+    pages = policy.get("pages", {})
+    if not isinstance(pages, dict):
+        errors.append("visual.screenshot_policy.pages must be a mapping")
+        return
+    for page_name, cases in pages.items():
+        if not isinstance(cases, dict):
+            errors.append(
+                f"visual.screenshot_policy.pages.{page_name} must be a mapping"
+            )
+            continue
+        for case_name, raw in cases.items():
+            path = f"visual.screenshot_policy.pages.{page_name}.{case_name}"
+            purpose = raw if isinstance(raw, str) else (
+                raw.get("purpose") if isinstance(raw, dict) else None
+            )
+            if purpose is not None and purpose not in VALID_SCREENSHOT_PURPOSES:
+                errors.append(
+                    f"{path}.purpose must be one of "
+                    + ", ".join(VALID_SCREENSHOT_PURPOSES)
+                )
+            if isinstance(raw, dict) and raw.get("viewports") is not None:
+                viewports = raw.get("viewports")
+                if not isinstance(viewports, list) or not all(
+                    isinstance(value, str) and value.strip()
+                    for value in viewports
+                ):
+                    errors.append(f"{path}.viewports must be a string list")
 
 
 def validate_size_tolerance(errors, page_name, page_config):
@@ -456,6 +534,7 @@ def validate_settings(errors, warnings):
 
     settings = load_settings()
     validate_artifact_settings(errors)
+    validate_screenshot_policy(errors, settings)
     validate_runtime_health(
         errors,
         "configs/settings.yaml runtime_health",
@@ -570,6 +649,7 @@ def validate_config(args):
             errors.append(f"pages.{page_name}.url is missing or invalid")
         validate_module_selectors(errors, page_name, page_config)
         validate_dynamic_regions(errors, page_name, page_config)
+        validate_readonly_interactions(errors, page_name, page_config)
         validate_size_tolerance(errors, page_name, page_config)
         raw_page_config = pages[page_name]
         validate_runtime_health(

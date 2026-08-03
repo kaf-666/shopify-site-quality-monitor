@@ -21,12 +21,12 @@ class JenkinsfileStaticTests(unittest.TestCase):
                 f"unbalanced {opening}{closing}",
             )
 
-    def test_only_mondressy_bare_host_home_gray_scope_is_invoked(self):
+    def test_only_mondressy_bare_host_home_all_viewports_scope_is_invoked(self):
         self.assertIn("target_host=mondressy.com", self.content)
         self.assertIn("signed_request_hosts=mondressy.com", self.content)
         self.assertIn("run_all.py", self.content)
         self.assertIn("--site mondressy_US", self.content)
-        self.assertIn("--viewport desktop", self.content)
+        self.assertIn("--viewport all", self.content)
         self.assertIn("--page home", self.content)
         self.assertNotIn("--viewport mobile", self.content)
         self.assertNotIn("--page collection", self.content)
