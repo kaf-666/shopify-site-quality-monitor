@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from playwright_checks.artifacts.screenshot_manager import (
     ScreenshotArtifactManager,
@@ -38,6 +38,88 @@ class VisualPurposePolicyTests(unittest.TestCase):
             page_config={},
             root=root,
         )
+
+    def _valid_product_state_with_checkout(self, **checkout_overrides):
+        checkout = {
+            "configured": True,
+            "diagnosticName": "paypal",
+            "optional": True,
+            "present": True,
+            "visible": True,
+            "loading": False,
+            "rect": {
+                "left": 520,
+                "top": 570,
+                "right": 1000,
+                "bottom": 654,
+                "width": 480,
+                "height": 84,
+            },
+            "purchaseAreaPresent": True,
+            "purchaseAreaVisible": True,
+            "purchaseAreaRect": {
+                "left": 520,
+                "top": 450,
+                "right": 1000,
+                "bottom": 654,
+                "width": 480,
+                "height": 204,
+            },
+            "purchaseAreaWithinInfo": True,
+            "purchaseAreaInfoRatio": 0.19,
+            "maximumPurchaseAreaHeight": 420,
+            "maximumPurchaseAreaInfoRatio": 0.65,
+            "withinHorizontalViewport": True,
+            "withinInfo": True,
+            "containerHorizontalOverflow": False,
+            "pageHorizontalOverflow": False,
+            "overlapsAddToCart": False,
+            "overlapsVariantRegion": False,
+            "minimumHeight": 36,
+            "maximumHeight": 140,
+        }
+        checkout.update(checkout_overrides)
+        return {
+            "root": {
+                "left": 0,
+                "top": 0,
+                "right": 1000,
+                "bottom": 1200,
+                "width": 1000,
+                "height": 1200,
+            },
+            "gallery": {
+                "left": 0,
+                "top": 0,
+                "right": 500,
+                "bottom": 700,
+                "width": 500,
+                "height": 700,
+            },
+            "info": {
+                "left": 520,
+                "top": 0,
+                "right": 1000,
+                "bottom": 1100,
+                "width": 480,
+                "height": 1100,
+            },
+            "addToCart": {
+                "left": 520,
+                "top": 500,
+                "right": 1000,
+                "bottom": 550,
+                "width": 480,
+                "height": 50,
+            },
+            "galleryVisible": True,
+            "infoVisible": True,
+            "addToCartVisible": True,
+            "readyImageCount": 1,
+            "pageHorizontalOverflow": False,
+            "viewportHeight": 900,
+            "acceleratedCheckout": checkout,
+        }
 
     def _readonly_fault_result(
         self,
@@ -751,6 +833,16 @@ class VisualPurposePolicyTests(unittest.TestCase):
 
     def test_product_main_masks_are_clipped_to_their_regions(self):
         page_model = MagicMock()
+        page_model.config = {
+            "accelerated_checkout": {
+                "container_selector": ".shopify-payment-button",
+                "content_mask_selectors": [
+                    ".shopify-payment-button__button",
+                    "shopify-paypal-button",
+                    "iframe",
+                ],
+            }
+        }
         target = MagicMock()
         target.evaluate.return_value = {"maskBoxes": []}
         page_model.module.return_value.element_handle.return_value = MagicMock()
@@ -765,6 +857,270 @@ class VisualPurposePolicyTests(unittest.TestCase):
         script = target.evaluate.call_args.args[0]
         self.assertIn("relativeBox(node, nodes.gallery)", script)
         self.assertIn("relativeBox(node, nodes.info)", script)
+        self.assertIn("relativeBox(node, paymentContainer)", script)
+        self.assertNotIn("relativeBox(paymentContainer", script)
+
+    def test_mondressy_payment_masks_only_real_inner_content(self):
+        product_config = get_page_config(
+            "product",
+            load_site_config("mondressy_US"),
+            viewport="mobile",
+        )
+        checkout = product_config["accelerated_checkout"]
+        masks = checkout["content_mask_selectors"]
+
+        self.assertEqual(
+            ".shopify-payment-button[data-shopify='payment-button']",
+            checkout["container_selector"],
+        )
+        self.assertIn(".shopify-payment-button__button", masks)
+        self.assertIn("shopify-paypal-button", masks)
+        self.assertIn("[id^='zoid-paypal-buttons-']", masks)
+        self.assertIn("iframe", masks)
+        self.assertIn(
+            "shopify-paypal-button",
+            checkout["brand_presence_selectors"],
+        )
+        self.assertIn(
+            "iframe.component-frame.visible",
+            checkout["brand_presence_selectors"],
+        )
+        self.assertNotIn(checkout["container_selector"], masks)
+        self.assertNotIn(checkout["purchase_area_selector"], masks)
+
+    def test_optional_payment_absence_returns_immediately(self):
+        page_model = MagicMock()
+        page_model.config = {
+            "accelerated_checkout": {
+                "container_selector": ".shopify-payment-button",
+                "optional_probe_timeout_ms": 750,
+            }
+        }
+        target = MagicMock()
+        target.evaluate.return_value = {
+            "configured": True,
+            "present": False,
+            "optional": True,
+        }
+
+        with patch.object(product_check.time, "sleep") as sleep:
+            state = product_check.probe_optional_accelerated_checkout(
+                page_model,
+                target,
+            )
+
+        self.assertFalse(state["present"])
+        self.assertTrue(state["optional"])
+        sleep.assert_not_called()
+        self.assertEqual(1, target.evaluate.call_count)
+
+    def test_late_cross_origin_iframe_does_not_block_payment_probe(self):
+        page_model = MagicMock()
+        page_model.config = {
+            "accelerated_checkout": {
+                "container_selector": ".shopify-payment-button",
+                "optional_probe_timeout_ms": 750,
+                "optional_probe_interval_ms": 100,
+                "optional_probe_stable_samples": 2,
+            }
+        }
+        target = MagicMock()
+        outer = {
+            "configured": True,
+            "present": True,
+            "optional": True,
+            "visible": True,
+            "rect": {"width": 356, "height": 84},
+        }
+        target.evaluate.side_effect = [dict(outer), dict(outer)]
+
+        with patch.object(product_check.time, "sleep") as sleep:
+            state = product_check.probe_optional_accelerated_checkout(
+                page_model,
+                target,
+            )
+
+        self.assertTrue(state["present"])
+        self.assertEqual(2, state["stableSamples"])
+        self.assertEqual(2, target.evaluate.call_count)
+        sleep.assert_called_once()
+        probe_script = target.evaluate.call_args.args[0]
+        self.assertNotIn("contentDocument", probe_script)
+        self.assertNotIn("contentWindow", probe_script)
+
+    def test_payment_absence_keeps_both_product_gates_normal(self):
+        for case in ("product_main", "variant_changed_state"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp_dir:
+                clear_results()
+                manager = self._manager(
+                    Path(temp_dir) / "artifacts",
+                    page="product",
+                    viewport="mobile",
+                )
+                baseline = Path(temp_dir) / f"{case}-baseline.png"
+                current = manager.temporary_path(case, "current")
+                diff = manager.temporary_path(case, "diff")
+                Image.new("RGB", (80, 80), "white").save(baseline)
+                Image.new("RGB", (80, 80), "white").save(current)
+
+                failures = process_results(
+                    {
+                        case: {
+                            "baseline": str(baseline),
+                            "target_baseline": str(baseline),
+                            "legacy_baseline": None,
+                            "current": str(current),
+                            "diff": str(diff),
+                            "dynamic_strategy": "mask_content",
+                            "structural_status": "passed",
+                            "structural_issues": [],
+                            "content_mask_boxes": [],
+                        }
+                    },
+                    "fixture",
+                    "visual",
+                    "product",
+                    manager=manager,
+                )
+
+                self.assertEqual([], failures)
+                self.assertEqual("passed", get_results()[-1]["status"])
+
+    def test_payment_brand_pixels_are_stable_across_cases_and_viewports(self):
+        combinations = (
+            ("desktop", "product_main", (255, 210, 80)),
+            ("desktop", "variant_changed_state", (0, 90, 200)),
+            ("mobile", "product_main", (255, 196, 57)),
+            ("mobile", "variant_changed_state", (30, 120, 220)),
+        )
+        for viewport, case, brand_color in combinations:
+            with (
+                self.subTest(viewport=viewport, case=case),
+                tempfile.TemporaryDirectory() as temp_dir,
+            ):
+                clear_results()
+                manager = self._manager(
+                    Path(temp_dir) / "artifacts",
+                    page="product",
+                    viewport=viewport,
+                )
+                baseline = Path(temp_dir) / f"{case}-baseline.png"
+                current = manager.temporary_path(case, "current")
+                diff = manager.temporary_path(case, "diff")
+                baseline_image = Image.new("RGB", (100, 80), "white")
+                baseline_draw = ImageDraw.Draw(baseline_image)
+                baseline_draw.rectangle((10, 20, 90, 60), outline="black")
+                baseline_image.save(baseline)
+                current_image = baseline_image.copy()
+                current_draw = ImageDraw.Draw(current_image)
+                current_draw.rectangle((12, 22, 88, 58), fill=brand_color)
+                current_image.save(current)
+
+                failures = process_results(
+                    {
+                        case: {
+                            "baseline": str(baseline),
+                            "target_baseline": str(baseline),
+                            "legacy_baseline": None,
+                            "current": str(current),
+                            "diff": str(diff),
+                            "dynamic_strategy": "mask_content",
+                            "structural_status": "passed",
+                            "structural_issues": [],
+                            "content_mask_boxes": [
+                                {
+                                    "left": 12,
+                                    "top": 22,
+                                    "right": 88,
+                                    "bottom": 58,
+                                }
+                            ],
+                            "content_mask_coordinate_size": {
+                                "width": 100,
+                                "height": 80,
+                            },
+                        }
+                    },
+                    "fixture",
+                    "visual",
+                    "product",
+                    manager=manager,
+                )
+
+                self.assertEqual([], failures)
+                self.assertEqual(
+                    "content_changed",
+                    get_results()[-1]["status"],
+                )
+
+    def test_payment_overlap_and_variant_overlap_remain_gates(self):
+        state = self._valid_product_state_with_checkout(
+            overlapsAddToCart=True,
+            overlapsVariantRegion=True,
+        )
+
+        issues = product_check.product_main_issues(state)
+
+        self.assertIn("accelerated_checkout_overlaps_add_to_cart", issues)
+        self.assertIn("accelerated_checkout_overlaps_variant_region", issues)
+
+    def test_payment_horizontal_overflow_remains_a_gate(self):
+        state = self._valid_product_state_with_checkout(
+            withinHorizontalViewport=False,
+            containerHorizontalOverflow=True,
+        )
+
+        issues = product_check.product_main_issues(state)
+
+        self.assertIn(
+            "accelerated_checkout_outside_horizontal_viewport",
+            issues,
+        )
+        self.assertIn("accelerated_checkout_horizontal_overflow", issues)
+
+    def test_payment_and_purchase_area_height_anomalies_remain_gates(self):
+        state = self._valid_product_state_with_checkout(
+            rect={
+                "left": 520,
+                "top": 570,
+                "right": 1000,
+                "bottom": 770,
+                "width": 480,
+                "height": 200,
+            },
+            purchaseAreaRect={
+                "left": 520,
+                "top": 450,
+                "right": 1000,
+                "bottom": 950,
+                "width": 480,
+                "height": 500,
+            },
+            purchaseAreaInfoRatio=0.8,
+        )
+
+        issues = product_check.product_main_issues(state)
+
+        self.assertIn("accelerated_checkout_height_unreasonable", issues)
+        self.assertIn("purchase_area_height_unreasonable", issues)
+
+    def test_missing_entire_purchase_area_still_fails(self):
+        state = self._valid_product_state_with_checkout(
+            present=False,
+            visible=False,
+            rect=None,
+            purchaseAreaPresent=False,
+            purchaseAreaVisible=False,
+            purchaseAreaRect=None,
+            purchaseAreaWithinInfo=False,
+            purchaseAreaInfoRatio=None,
+        )
+        state["addToCartVisible"] = False
+
+        issues = product_check.product_main_issues(state)
+
+        self.assertIn("purchase_area_missing", issues)
+        self.assertIn("add_to_cart_not_visible", issues)
 
     def test_fault_injection_dynamic_product_content_does_not_fail_gate(self):
         scenarios = (

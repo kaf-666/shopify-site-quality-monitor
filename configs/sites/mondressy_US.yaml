@@ -244,6 +244,28 @@ pages:
       enabled: true
       option_name: Color
       option_value: Sky Blue
+    accelerated_checkout:
+      diagnostic_name: paypal
+      container_selector: ".shopify-payment-button[data-shopify='payment-button']"
+      purchase_area_selector: ".payment-buttons"
+      variant_area_selector: ".variant-wrapper"
+      content_mask_selectors:
+        - ".shopify-payment-button__button"
+        - "shopify-paypal-button"
+        - "[id^='zoid-paypal-buttons-']"
+        - "iframe"
+      brand_presence_selectors:
+        - "shopify-paypal-button"
+        - "[id^='zoid-paypal-buttons-']"
+        - "iframe.component-frame.visible"
+      optional_probe_timeout_ms: 750
+      optional_probe_interval_ms: 150
+      optional_probe_stable_samples: 2
+      minimum_height_px: 36
+      maximum_height_px: 140
+      maximum_overlap_px: 8
+      maximum_purchase_area_height_px: 420
+      maximum_purchase_area_info_ratio: 0.65
     modules:
       gallery:
         - xpath

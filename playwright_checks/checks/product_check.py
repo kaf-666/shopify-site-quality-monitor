@@ -55,6 +55,118 @@ ADD_TO_CART_LOADING_CLASSES = (
 )
 
 
+def accelerated_checkout_config(page_model):
+    configured = page_model.config.get("accelerated_checkout") or {}
+    return dict(configured) if isinstance(configured, dict) else {}
+
+
+def probe_optional_accelerated_checkout(page_model, target):
+    """Briefly observe outer checkout geometry without requiring the widget."""
+
+    configured = accelerated_checkout_config(page_model)
+    selector = str(configured.get("container_selector") or "").strip()
+    if not selector:
+        return {"configured": False, "present": False, "optional": True}
+
+    def read_state():
+        return target.evaluate(
+            """
+            (root, selector) => {
+                const node = root.querySelector(selector);
+                if (!node) {
+                    return {
+                        configured: true,
+                        present: false,
+                        optional: true,
+                    };
+                }
+                const rect = node.getBoundingClientRect();
+                const style = window.getComputedStyle(node);
+                return {
+                    configured: true,
+                    present: true,
+                    optional: true,
+                    visible: rect.width > 0 && rect.height > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && style.opacity !== '0',
+                    rect: {
+                        left: rect.left,
+                        top: rect.top,
+                        right: rect.right,
+                        bottom: rect.bottom,
+                        width: rect.width,
+                        height: rect.height,
+                    },
+                };
+            }
+            """,
+            selector,
+        )
+
+    started = time.perf_counter()
+    try:
+        state = read_state()
+        if not state.get("present"):
+            state["probeDurationMs"] = round(
+                (time.perf_counter() - started) * 1000,
+                2,
+            )
+            return state
+
+        timeout = max(
+            0,
+            float(configured.get("optional_probe_timeout_ms", 750)) / 1000,
+        )
+        interval = max(
+            0.05,
+            float(configured.get("optional_probe_interval_ms", 150)) / 1000,
+        )
+        required = max(
+            1,
+            int(configured.get("optional_probe_stable_samples", 2)),
+        )
+        deadline = time.perf_counter() + timeout
+        previous_size = None
+        stable_samples = 0
+        while True:
+            rect = state.get("rect") or {}
+            size = (
+                round(float(rect.get("width", 0) or 0), 1),
+                round(float(rect.get("height", 0) or 0), 1),
+            )
+            if size == previous_size:
+                stable_samples += 1
+            else:
+                stable_samples = 1
+            if stable_samples >= required or time.perf_counter() >= deadline:
+                break
+            previous_size = size
+            time.sleep(interval)
+            state = read_state()
+            if not state.get("present"):
+                break
+
+        state["stableSamples"] = stable_samples
+        state["probeDurationMs"] = round(
+            (time.perf_counter() - started) * 1000,
+            2,
+        )
+        return state
+    except Exception as error:
+        # Optional third-party content must never block the product capture.
+        return {
+            "configured": True,
+            "present": False,
+            "optional": True,
+            "probeError": type(error).__name__,
+            "probeDurationMs": round(
+                (time.perf_counter() - started) * 1000,
+                2,
+            ),
+        }
+
+
 def check_add_to_cart(page_model):
     print("\nAdd To Cart state")
     failures = []
@@ -111,9 +223,12 @@ def product_main_snapshot(page_model, target):
     gallery = page_model.module("gallery").element_handle()
     info = page_model.module("info").element_handle()
     add_to_cart = locate_ready_add_to_cart(page_model).element_handle()
+    checkout_config = accelerated_checkout_config(page_model)
     return target.evaluate(
         """
-        (root, nodes) => {
+        (root, payload) => {
+            const nodes = payload.nodes;
+            const checkout = payload.checkout || {};
             const rectOf = (node) => {
                 const rect = node.getBoundingClientRect();
                 return {
@@ -134,6 +249,52 @@ def product_main_snapshot(page_model, target):
                     && style.opacity !== '0';
             };
             const rootRect = rectOf(root);
+            const infoRect = rectOf(nodes.info);
+            const overlap = (first, second) => {
+                if (!first || !second) return {width: 0, height: 0};
+                return {
+                    width: Math.max(
+                        0,
+                        Math.min(first.right, second.right)
+                            - Math.max(first.left, second.left)
+                    ),
+                    height: Math.max(
+                        0,
+                        Math.min(first.bottom, second.bottom)
+                            - Math.max(first.top, second.top)
+                    ),
+                };
+            };
+            const unionRect = (items) => {
+                if (!items.length) return null;
+                const rects = items.map(rectOf);
+                const left = Math.min(...rects.map((rect) => rect.left));
+                const top = Math.min(...rects.map((rect) => rect.top));
+                const right = Math.max(...rects.map((rect) => rect.right));
+                const bottom = Math.max(...rects.map((rect) => rect.bottom));
+                return {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                    width: right - left,
+                    height: bottom - top,
+                };
+            };
+            const queryAll = (boundary, selectors) => {
+                if (!boundary) return [];
+                const found = [];
+                const seen = new Set();
+                for (const selector of selectors || []) {
+                    for (const node of boundary.querySelectorAll(selector)) {
+                        if (!seen.has(node)) {
+                            seen.add(node);
+                            found.push(node);
+                        }
+                    }
+                }
+                return found;
+            };
             const relativeBox = (node, boundary) => {
                 const rect = node.getBoundingClientRect();
                 const boundaryRect = boundary
@@ -177,6 +338,55 @@ def product_main_snapshot(page_model, target):
                     '[class*="countdown"]'
                 ].join(','))
             ];
+            const paymentContainer = checkout.container_selector
+                ? nodes.info.querySelector(checkout.container_selector)
+                : null;
+            const purchaseArea = checkout.purchase_area_selector
+                ? nodes.info.querySelector(checkout.purchase_area_selector)
+                : null;
+            const variantNodes = checkout.variant_area_selector
+                ? Array.from(
+                    nodes.info.querySelectorAll(checkout.variant_area_selector)
+                )
+                : [];
+            const paymentMaskCandidates = queryAll(
+                paymentContainer,
+                checkout.content_mask_selectors || []
+            );
+            const paymentBrandNodes = queryAll(
+                paymentContainer,
+                checkout.brand_presence_selectors || []
+            );
+            const paymentMaskNodes = paymentMaskCandidates.filter(
+                (candidate) => !paymentMaskCandidates.some(
+                    (other) => other !== candidate && other.contains(candidate)
+                )
+            );
+            const paymentRect = paymentContainer
+                ? rectOf(paymentContainer)
+                : null;
+            const purchaseAreaRect = purchaseArea
+                ? rectOf(purchaseArea)
+                : null;
+            const variantAreaRect = unionRect(variantNodes);
+            const addToCartRect = rectOf(nodes.addToCart);
+            const paymentAddOverlap = overlap(paymentRect, addToCartRect);
+            const paymentVariantOverlap = overlap(
+                paymentRect,
+                variantAreaRect
+            );
+            const maximumOverlap = Number(
+                checkout.maximum_overlap_px || 8
+            );
+            const paymentLoading = Boolean(
+                paymentContainer
+                && (
+                    /disabled|loading/i.test(paymentContainer.className || '')
+                    || paymentContainer.querySelector(
+                        '.shopify-payment-button__skeleton'
+                    )
+                )
+            );
             const images = Array.from(
                 nodes.gallery.querySelectorAll('img')
             ).filter(visible);
@@ -196,8 +406,8 @@ def product_main_snapshot(page_model, target):
             return {
                 root: rectOf(root),
                 gallery: rectOf(nodes.gallery),
-                info: rectOf(nodes.info),
-                addToCart: rectOf(nodes.addToCart),
+                info: infoRect,
+                addToCart: addToCartRect,
                 galleryVisible: visible(nodes.gallery),
                 infoVisible: visible(nodes.info),
                 addToCartVisible: visible(nodes.addToCart),
@@ -210,6 +420,81 @@ def product_main_snapshot(page_model, target):
                         > document.documentElement.clientWidth + 2,
                 viewportWidth: window.innerWidth,
                 viewportHeight: window.innerHeight,
+                acceleratedCheckout: {
+                    configured: Boolean(checkout.container_selector),
+                    diagnosticName: String(
+                        checkout.diagnostic_name || 'accelerated_checkout'
+                    ),
+                    optional: true,
+                    present: Boolean(paymentContainer),
+                    visible: Boolean(
+                        paymentContainer && visible(paymentContainer)
+                    ),
+                    loading: paymentLoading,
+                    brandContentPresent: paymentBrandNodes.some(visible),
+                    iframePresent: Boolean(
+                        paymentContainer
+                        && paymentContainer.querySelector('iframe')
+                    ),
+                    rect: paymentRect,
+                    purchaseAreaPresent: Boolean(purchaseArea),
+                    purchaseAreaVisible: Boolean(
+                        purchaseArea && visible(purchaseArea)
+                    ),
+                    purchaseAreaRect,
+                    variantAreaRect,
+                    withinHorizontalViewport: Boolean(
+                        paymentRect
+                        && paymentRect.left >= -2
+                        && paymentRect.right <= window.innerWidth + 2
+                    ),
+                    withinInfo: Boolean(
+                        paymentRect
+                        && paymentRect.left >= infoRect.left - 2
+                        && paymentRect.right <= infoRect.right + 2
+                        && paymentRect.top >= infoRect.top - 2
+                        && paymentRect.bottom <= infoRect.bottom + 2
+                    ),
+                    purchaseAreaWithinInfo: Boolean(
+                        purchaseAreaRect
+                        && purchaseAreaRect.left >= infoRect.left - 2
+                        && purchaseAreaRect.right <= infoRect.right + 2
+                        && purchaseAreaRect.top >= infoRect.top - 2
+                        && purchaseAreaRect.bottom <= infoRect.bottom + 2
+                    ),
+                    containerHorizontalOverflow: Boolean(
+                        paymentContainer
+                        && paymentContainer.scrollWidth
+                            > paymentContainer.clientWidth + 2
+                    ),
+                    pageHorizontalOverflow:
+                        document.documentElement.scrollWidth
+                            > document.documentElement.clientWidth + 2,
+                    overlapsAddToCart:
+                        paymentAddOverlap.width > maximumOverlap
+                            && paymentAddOverlap.height > maximumOverlap,
+                    overlapsVariantRegion:
+                        paymentVariantOverlap.width > maximumOverlap
+                            && paymentVariantOverlap.height > maximumOverlap,
+                    addToCartOverlap: paymentAddOverlap,
+                    variantOverlap: paymentVariantOverlap,
+                    minimumHeight: Number(
+                        checkout.minimum_height_px || 0
+                    ),
+                    maximumHeight: Number(
+                        checkout.maximum_height_px || 0
+                    ),
+                    maximumPurchaseAreaHeight: Number(
+                        checkout.maximum_purchase_area_height_px || 0
+                    ),
+                    maximumPurchaseAreaInfoRatio: Number(
+                        checkout.maximum_purchase_area_info_ratio || 0
+                    ),
+                    purchaseAreaInfoRatio: purchaseAreaRect && infoRect.height
+                        ? purchaseAreaRect.height / infoRect.height
+                        : null,
+                    contentMaskCount: paymentMaskNodes.length,
+                },
                 maskBoxes: [
                     ...galleryDynamicNodes.filter(visible).map(
                         (node) => relativeBox(node, nodes.gallery)
@@ -217,13 +502,117 @@ def product_main_snapshot(page_model, target):
                     ...infoDynamicNodes.filter(visible).map(
                         (node) => relativeBox(node, nodes.info)
                     ),
+                    ...paymentMaskNodes.filter(visible).map(
+                        (node) => relativeBox(node, paymentContainer)
+                    ),
                 ].filter(
                     (box) => box.right > box.left && box.bottom > box.top
                 ),
             };
         }
         """,
-        {"gallery": gallery, "info": info, "addToCart": add_to_cart},
+        {
+            "nodes": {
+                "gallery": gallery,
+                "info": info,
+                "addToCart": add_to_cart,
+            },
+            "checkout": checkout_config,
+        },
+    )
+
+
+def accelerated_checkout_issues(state):
+    checkout = state.get("acceleratedCheckout") or {}
+    if not checkout.get("configured"):
+        return []
+
+    issues = []
+    purchase = checkout.get("purchaseAreaRect") or {}
+    if not checkout.get("purchaseAreaPresent"):
+        issues.append("purchase_area_missing")
+    else:
+        if not checkout.get("purchaseAreaVisible"):
+            issues.append("purchase_area_not_visible")
+        if purchase.get("width", 0) <= 0 or purchase.get("height", 0) <= 0:
+            issues.append("purchase_area_has_no_size")
+        if not checkout.get("purchaseAreaWithinInfo"):
+            issues.append("purchase_area_outside_product_info")
+        maximum_purchase_height = checkout.get("maximumPurchaseAreaHeight", 0)
+        maximum_purchase_ratio = checkout.get(
+            "maximumPurchaseAreaInfoRatio",
+            0,
+        )
+        purchase_ratio = checkout.get("purchaseAreaInfoRatio")
+        if (
+            maximum_purchase_height
+            and purchase.get("height", 0) > maximum_purchase_height
+        ) or (
+            maximum_purchase_ratio
+            and purchase_ratio is not None
+            and purchase_ratio > maximum_purchase_ratio
+        ):
+            issues.append("purchase_area_height_unreasonable")
+
+    if not checkout.get("present"):
+        return issues
+
+    rect = checkout.get("rect") or {}
+    if not checkout.get("visible") and not checkout.get("loading"):
+        issues.append("accelerated_checkout_not_visible")
+    if rect.get("width", 0) <= 0 or rect.get("height", 0) <= 0:
+        issues.append("accelerated_checkout_has_no_size")
+    minimum_height = checkout.get("minimumHeight", 0)
+    maximum_height = checkout.get("maximumHeight", 0)
+    if (
+        minimum_height and rect.get("height", 0) < minimum_height
+    ) or (
+        maximum_height and rect.get("height", 0) > maximum_height
+    ):
+        issues.append("accelerated_checkout_height_unreasonable")
+    if not checkout.get("withinInfo"):
+        issues.append("accelerated_checkout_outside_product_info")
+    if not checkout.get("withinHorizontalViewport"):
+        issues.append("accelerated_checkout_outside_horizontal_viewport")
+    if checkout.get("containerHorizontalOverflow") or checkout.get(
+        "pageHorizontalOverflow"
+    ):
+        issues.append("accelerated_checkout_horizontal_overflow")
+    if checkout.get("overlapsAddToCart"):
+        issues.append("accelerated_checkout_overlaps_add_to_cart")
+    if checkout.get("overlapsVariantRegion"):
+        issues.append("accelerated_checkout_overlaps_variant_region")
+    return issues
+
+
+def print_accelerated_checkout_diagnostics(state):
+    checkout = state.get("acceleratedCheckout") or {}
+    if not checkout.get("configured"):
+        return
+    name = str(checkout.get("diagnosticName") or "accelerated_checkout")
+    if not checkout.get("present"):
+        print(f"{name}_present=false {name}_check=optional")
+        return
+    rect = checkout.get("rect") or {}
+    formatted_rect = (
+        f"({rect.get('left', 0):.1f},{rect.get('top', 0):.1f})-"
+        f"({rect.get('right', 0):.1f},{rect.get('bottom', 0):.1f})"
+    )
+    print(
+        f"{name}_present=true "
+        f"{name}_visible={str(bool(checkout.get('visible'))).lower()} "
+        f"{name}_loading={str(bool(checkout.get('loading'))).lower()} "
+        f"{name}_brand_content="
+        f"{str(bool(checkout.get('brandContentPresent'))).lower()} "
+        f"{name}_iframe_present="
+        f"{str(bool(checkout.get('iframePresent'))).lower()} "
+        f"{name}_rect={formatted_rect} "
+        f"{name}_within_viewport="
+        f"{str(bool(checkout.get('withinHorizontalViewport'))).lower()} "
+        f"{name}_overlaps_add_to_cart="
+        f"{str(bool(checkout.get('overlapsAddToCart'))).lower()} "
+        f"{name}_horizontal_overflow="
+        f"{str(bool(checkout.get('containerHorizontalOverflow') or checkout.get('pageHorizontalOverflow'))).lower()}"
     )
 
 
@@ -272,6 +661,7 @@ def product_main_issues(state):
     natural = state.get("naturalRatio")
     if rendered and natural and max(rendered / natural, natural / rendered) > 2.5:
         issues.append("product_main_image_severely_stretched")
+    issues.extend(accelerated_checkout_issues(state))
     return issues
 
 
@@ -301,7 +691,11 @@ def capture_product_main(ctx, page_model, case_name="product_main"):
             hide_dynamic=False,
         )
         target = product_main_target(page_model)
+        payment_probe = probe_optional_accelerated_checkout(page_model, target)
         state = product_main_snapshot(page_model, target)
+        if state.get("acceleratedCheckout") is not None:
+            state["acceleratedCheckout"]["probe"] = payment_probe
+        print_accelerated_checkout_diagnostics(state)
         issues = product_main_issues(state)
         ctx.artifact_manager.capture_element(target, paths["current"])
         paths.update(
