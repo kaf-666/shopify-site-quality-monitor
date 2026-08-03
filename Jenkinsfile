@@ -90,7 +90,7 @@ pipeline {
 
                     echo 'site_key=mondressy_US'
                     echo 'target_host=mondressy.com'
-                    echo 'page=Home'
+                    echo 'pages=home,collection,product'
                     echo 'viewports=desktop,mobile'
                     echo 'report_only=true'
                     echo 'runtime_exit_gate=false'
@@ -174,7 +174,7 @@ pipeline {
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
                                         --viewport all \
-                                        --page home
+                                        --page all
                                 ''',
                                 returnStatus: true
                             ).toString()
@@ -184,7 +184,7 @@ pipeline {
                                     @.venv\\Scripts\\python.exe -u run_all.py ^
                                         --site mondressy_US ^
                                         --viewport all ^
-                                        --page home
+                                        --page all
                                 ''',
                                 returnStatus: true
                             ).toString()
