@@ -21,6 +21,7 @@ pipeline {
         RUNTIME_HEALTH_ENABLED = 'true'
         RUNTIME_HEALTH_REPORT_ONLY = 'true'
         RUNTIME_HEALTH_AFFECT_EXIT_CODE = 'false'
+        RUNTIME_HEALTH_FAIL_ON_WARNING = 'false'
         VISUAL_STRICT_WARNINGS = 'false'
         SCREENSHOT_RETENTION_MODE = 'evidence_only'
         ALLOW_BASELINE_INIT = 'false'
@@ -296,6 +297,7 @@ pipeline {
                         archiveArtifacts(
                             artifacts: (
                                 "artifacts/${env.VISUAL_RUN_ID}/artifact-summary.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/gray-summary.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/visual-results.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/artifact-manifest.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/runtime/*.json," +

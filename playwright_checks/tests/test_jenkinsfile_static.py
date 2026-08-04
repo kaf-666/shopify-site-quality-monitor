@@ -42,6 +42,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
         expected = (
             "RUNTIME_HEALTH_REPORT_ONLY = 'true'",
             "RUNTIME_HEALTH_AFFECT_EXIT_CODE = 'false'",
+            "RUNTIME_HEALTH_FAIL_ON_WARNING = 'false'",
             "ALLOW_BASELINE_INIT = 'false'",
             "FORCE_BASELINE_INIT = 'false'",
             "ALLOW_SIDE_EFFECT_FLOW = 'false'",
@@ -489,6 +490,21 @@ class JenkinsfileStaticTests(unittest.TestCase):
                     expected,
                     normalized_file_value(file_content),
                 )
+
+    def test_gray_summary_artifact_is_archived(self):
+        self.assertIn(
+            '"artifacts/${env.VISUAL_RUN_ID}/gray-summary.json,"',
+            self.content,
+        )
+
+    def test_python_failure_is_evaluated_before_summary_failure(self):
+        evaluate_index = self.content.index("stage('Evaluate Result')")
+        post_index = self.content.index("    post {")
+        evaluate_stage = self.content[evaluate_index:post_index]
+        self.assertLess(
+            evaluate_stage.index("env.GRAY_PYTHON_EXIT_CODE != '0'"),
+            evaluate_stage.index("summaryExitCode != 0"),
+        )
 
     def test_monitor_command_is_inside_with_credentials(self):
         run_index = self.content.index(
