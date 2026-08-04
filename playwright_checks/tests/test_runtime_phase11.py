@@ -459,6 +459,207 @@ class RuntimePhase11PlaywrightTests(unittest.TestCase):
         self.temp.cleanup()
         clear_results()
 
+    def _product_health(self):
+        return collect_health_fingerprint(
+            self.page,
+            {"modules": {"add_to_cart": ["css", "button[name='add']"]}},
+            {
+                "_page_name": "product",
+                "loading_selectors": [],
+                "loading_confirmation_ms": 0,
+            },
+        )
+
+    @staticmethod
+    def _critical_element(health, name):
+        return next(
+            item for item in health["critical_elements"] if item["name"] == name
+        )
+
+    def test_product_price_uses_visible_later_match_and_avoids_partial_failure(self):
+        self.page.set_content(
+            """
+            <main>
+              <h1>Fixture Product</h1>
+              <div class="price" style="display:none">Template $10</div>
+              <div class="product__price">$10</div>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(2, price["match_count"])
+        self.assertEqual(2, price["count"])
+        self.assertEqual(2, price["checked_count"])
+        self.assertEqual(1, price["matched_index"])
+        self.assertTrue(price["visible"])
+        self.assertTrue(price["satisfied"])
+        self.assertTrue(price["requires_non_empty_text"])
+        self.assertIn(".product__price", price["selector"])
+        self.assertNotIn("product.price", health["missing_critical_elements"])
+
+        findings = build_findings(
+            {"status": 200, "attempts": []},
+            {
+                "events": [
+                    {
+                        "event_type": "request_failed",
+                        "party": "first_party",
+                        "blocking": True,
+                        "count": 1,
+                    }
+                ],
+                "collector_errors": [],
+                "page_crashed": False,
+            },
+            health,
+            {},
+        )
+        self.assertNotIn(
+            "partial_render_failure",
+            {item.reason_code for item in findings},
+        )
+
+    def test_product_price_checks_all_138_matches_until_last_visible_node(self):
+        hidden_prices = "".join(
+            '<span class="price" style="display:none">Template</span>'
+            for _ in range(137)
+        )
+        self.page.set_content(
+            "<main><h1>Fixture Product</h1>"
+            f"{hidden_prices}"
+            '<span class="product__price">$138</span>'
+            '<button name="add">Add to cart</button></main>'
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(138, price["match_count"])
+        self.assertEqual(138, price["checked_count"])
+        self.assertEqual(137, price["matched_index"])
+        self.assertFalse(price["probe_truncated"])
+        self.assertTrue(price["visible"])
+        self.assertTrue(price["satisfied"])
+        self.assertNotIn("product.price", health["missing_critical_elements"])
+
+    def test_product_price_remains_missing_when_all_matches_are_hidden(self):
+        self.page.set_content(
+            """
+            <main>
+              <h1>Fixture Product</h1>
+              <div class="price" style="display:none">$10</div>
+              <div class="product__price" style="visibility:hidden">$20</div>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(2, price["checked_count"])
+        self.assertIsNone(price["matched_index"])
+        self.assertFalse(price["visible"])
+        self.assertFalse(price["satisfied"])
+        self.assertIn("product.price", health["missing_critical_elements"])
+
+    def test_product_price_visible_but_blank_is_not_satisfied(self):
+        self.page.set_content(
+            """
+            <main>
+              <h1>Fixture Product</h1>
+              <div class="price" style="width:100px;height:20px">   </div>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(1, price["checked_count"])
+        self.assertIsNone(price["matched_index"])
+        self.assertTrue(price["visible"])
+        self.assertFalse(price["satisfied"])
+        self.assertIn("product.price", health["missing_critical_elements"])
+
+    def test_product_price_prefers_visible_text_over_hidden_text(self):
+        self.page.set_content(
+            """
+            <main>
+              <h1>Fixture Product</h1>
+              <div class="price" style="display:none">$10</div>
+              <div class="product__price">$20</div>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(1, price["matched_index"])
+        self.assertTrue(price["visible"])
+        self.assertTrue(price["satisfied"])
+
+    def test_product_price_without_matches_keeps_missing_behavior(self):
+        self.page.set_content(
+            """
+            <main>
+              <h1>Fixture Product</h1>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        health = self._product_health()
+        price = self._critical_element(health, "product.price")
+
+        self.assertEqual(0, price["match_count"])
+        self.assertEqual(0, price["checked_count"])
+        self.assertIsNone(price["matched_index"])
+        self.assertFalse(price["visible"])
+        self.assertFalse(price["satisfied"])
+        self.assertIn("product.price", health["missing_critical_elements"])
+
+    def test_other_critical_elements_keep_existing_success_behavior(self):
+        self.page.set_content(
+            """
+            <main class="generic-critical">
+              <h1>Fixture Product</h1>
+              <div class="price">$10</div>
+              <button name="add">Add to cart</button>
+            </main>
+            """
+        )
+        product_health = self._product_health()
+
+        self.assertTrue(
+            self._critical_element(product_health, "product.title")["satisfied"]
+        )
+        self.assertTrue(
+            self._critical_element(product_health, "product.purchase_state")[
+                "satisfied"
+            ]
+        )
+        self.assertEqual([], product_health["missing_critical_elements"])
+
+        generic_health = collect_health_fingerprint(
+            self.page,
+            {},
+            {
+                "critical_selectors": [
+                    {"name": "generic.main", "selector": ".generic-critical"}
+                ],
+                "loading_selectors": [],
+                "loading_confirmation_ms": 0,
+            },
+        )
+        generic = self._critical_element(generic_health, "generic.main")
+        self.assertEqual(1, generic["match_count"])
+        self.assertEqual(0, generic["matched_index"])
+        self.assertTrue(generic["visible"])
+        self.assertTrue(generic["satisfied"])
+        self.assertEqual([], generic_health["missing_critical_elements"])
+
     def test_loading_filters_hidden_offscreen_image_and_transient_nodes(self):
         self.page.set_content(
             """
