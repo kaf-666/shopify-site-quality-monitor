@@ -35,8 +35,8 @@ Current site configurations:
 - `playwright_checks/tests/`: unit, Playwright fixture, integration, Jenkins,
   signed-header, and visual-comparison tests.
 - `baselines/`: reviewed baseline images.
-- `artifacts/<run-id>/`: current images, diffs, runtime evidence, and a copy of
-  the JSON results for one run.
+- `artifacts/<run-id>/`: current images, diffs, runtime evidence, a copy of the
+  JSON results, and the run-level gray summary for one run.
 - `reports/visual-results.json`: latest combined visual and page-health results.
 - `screenshots/`: legacy baseline location, still readable when fallback is
   enabled.
@@ -398,6 +398,37 @@ Run evidence is written beneath:
 artifacts/<run-id>/<site>/<viewport>/<page>/runtime/
 ```
 
+### Mondressy US full-scope gray summary
+
+The Jenkins gray run covers six independent scopes: Home, Collection, and
+Product on both desktop and mobile. For each scope,
+`playwright_checks.runtime.gray_summary` loads the highest-numbered valid
+`attempt-*.json` from that scope's Runtime directory. It separately matches the
+exact `site`, `viewport`, and `page` `page_summary` record in
+`visual-results.json`, so evidence from different scopes is never combined.
+
+The command prints key/value output and writes the same data to:
+
+```text
+artifacts/<run-id>/gray-summary.json
+```
+
+The JSON contains the expected scopes, completed and missing scope counts,
+missing evidence details, per-scope results, aggregate totals, the original
+Python exit code, summary validity, and the resulting Jenkins status. Totals
+cover Runtime status and findings, gated Runtime failures, visual and content
+results, execution errors, Console events, blocking Network anomalies, Loading
+anomalies, and first- versus third-party events.
+
+A scope is complete only when both a valid Runtime attempt and its matching
+`page_summary` exist. Missing evidence makes summary validation fail when the
+monitor Python process returned 0. If that process already returned nonzero,
+the summary still prints and saves all available evidence; Jenkins evaluates
+the original Python failure before the summary failure. Runtime remains
+report-only. If any scope unexpectedly enables `runtime_affects_exit_code`, the
+gray protection rejects the summary instead of silently enabling a Runtime
+gate.
+
 ## Side-effect flow
 
 Read-only visual checks do not add to cart, log in, or check out. The implemented
@@ -421,29 +452,31 @@ It uses the currently selected site configuration.
 
 ## Jenkins
 
-The current `Jenkinsfile` is a deliberately narrow, manually triggered
-Mondressy US home-page Runtime gray validation. It:
+The current `Jenkinsfile` is a deliberately narrow Mondressy US Runtime gray
+validation. The file does not define a cron trigger, but it accepts a manual
+user build or an externally configured Jenkins timer build. It:
 
-1. Rejects non-user-triggered builds.
+1. Rejects builds that are neither user-triggered nor Jenkins timer-triggered.
 2. Validates and then rebinds the three Jenkins string credentials without
    printing their values.
 3. Installs dependencies and Playwright Chromium, then smoke-tests browser
    launch.
-4. Runs only the `mondressy_US` desktop Home check, whose configured entry is
+4. Runs `mondressy_US` with `--viewport all --page all`, covering desktop and
+   mobile Home, Collection, and Product scopes. The configured entry is
    `https://mondressy.com`.
 5. Preserves the production Route-based signed-header injection and signs only
    `mondressy.com`.
-6. Captures the monitor and summary exit codes with `returnStatus`, archives
-   evidence, and only then evaluates the result.
-7. Keeps baseline initialization and side-effect flows disabled.
-
-The six-probe command above remains available as a standalone diagnostic; it is
-not invoked by this Jenkinsfile.
+6. Captures the monitor and summary exit codes, writes and archives
+   `gray-summary.json`, archives the remaining evidence, and only then evaluates
+   the result. The original monitor exit code is evaluated first.
+7. Keeps Runtime report-only, strict visual warnings, baseline initialization,
+   and side-effect flows disabled.
 
 Jenkins uses `SCREENSHOT_RETENTION_MODE=evidence_only` and
 `VISUAL_STRICT_WARNINGS=false`. `CONTENT_CHANGED`, visual warnings, and
-report-only Runtime findings do not block the gray build; a visual failure
-does. Each platform branch writes its `returnStatus` result directly to
+report-only Runtime or screenshot findings do not block the gray build; only a
+gate/structure visual failure does. The monitor writes its `returnStatus`
+result directly to
 `env.GRAY_PYTHON_EXIT_CODE` with `.toString()` and validates the saved value in
 the same Jenkins `script` block. Statuses 0, 1, and 2 therefore remain
 available even when the monitor command is nonzero.
@@ -453,10 +486,10 @@ Build and archived-artifact retention are separate:
 - `buildDiscarder(logRotator(...))` keeps builds for 14 days/20 builds and
   archived artifacts for 7 days/10 builds. Adjust these defaults to server
   capacity.
-- `archiveArtifacts` is limited to the current run summary, page manifests,
-  Runtime/attempt JSON, visual results, and retained current/diff/terminal
-  evidence. It excludes `.tmp`, staging, baselines, `.venv`, `__pycache__`,
-  PASS images, and old run IDs.
+- `archiveArtifacts` is limited to the current artifact and gray summaries,
+  page manifests, Runtime/attempt JSON, visual results, and retained
+  current/diff/terminal evidence. It excludes `.tmp`, staging, baselines,
+  `.venv`, `__pycache__`, PASS images, and old run IDs.
 - A reused workspace is cleaned only for old artifact run directories at build
   start. After archiving, cleanup removes only the current run's `.tmp`,
   staging, plugin-probe, and temporary diff remnants. It never calls a blanket
@@ -465,6 +498,7 @@ Build and archived-artifact retention are separate:
 To validate the new behavior, manually trigger the same Jenkins Job that uses
 this repository's `Jenkinsfile`. After it finishes, return
 `GRAY_PYTHON_EXIT_CODE`, `GRAY_SUMMARY_EXIT_CODE`, Runtime Health, Visual
-Result, Content Changed count, `artifact-summary.json`, retained image count
-and bytes, deleted PASS image count, `dropped_by_quota`, Jenkins Archive size,
-and workspace disk size before/after the build.
+Result, completed and missing scope counts, aggregate gray totals,
+`gray-summary.json`, `artifact-summary.json`, retained image count and bytes,
+deleted PASS image count, `dropped_by_quota`, Jenkins Archive size, and
+workspace disk size before/after the build.
