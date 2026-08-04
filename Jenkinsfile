@@ -41,10 +41,22 @@ pipeline {
                     def manualCauses = currentBuild.getBuildCauses(
                         'hudson.model.Cause$UserIdCause'
                     )
-                    if (manualCauses.isEmpty()) {
+                    def timerCauses = currentBuild.getBuildCauses(
+                        'hudson.triggers.TimerTrigger$TimerTriggerCause'
+                    )
+                    def isManualTrigger =
+                        manualCauses != null && !manualCauses.isEmpty()
+                    def isTimerTrigger =
+                        timerCauses != null && !timerCauses.isEmpty()
+
+                    echo "trigger_manual=${isManualTrigger}"
+                    echo "trigger_timer=${isTimerTrigger}"
+
+                    if (!isManualTrigger && !isTimerTrigger) {
                         error(
                             'This gray validation only permits a manual ' +
-                            'Jenkins user trigger.'
+                            'Jenkins user trigger or a Jenkins scheduled ' +
+                            'timer trigger.'
                         )
                     }
 

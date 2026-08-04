@@ -72,6 +72,74 @@ class JenkinsfileStaticTests(unittest.TestCase):
             self.assertNotIn(item, self.content)
         self.assertIn("Cause$UserIdCause", self.content)
 
+    def test_gray_trigger_allowlist_and_guard_are_explicit(self):
+        environment_start = self.content.index("stage('Environment Check')")
+        environment_end = self.content.index(
+            "stage('Install Dependencies')",
+            environment_start,
+        )
+        environment_stage = self.content[environment_start:environment_end]
+        allowed_causes = set(
+            re.findall(
+                r"getBuildCauses\(\s*'([^']+)'\s*\)",
+                environment_stage,
+            )
+        )
+
+        self.assertEqual(
+            {
+                "hudson.model.Cause$UserIdCause",
+                "hudson.triggers.TimerTrigger$TimerTriggerCause",
+            },
+            allowed_causes,
+        )
+        self.assertIn(
+            "if (!isManualTrigger && !isTimerTrigger)",
+            environment_stage,
+        )
+        self.assertIn(
+            'echo "trigger_manual=${isManualTrigger}"',
+            environment_stage,
+        )
+        self.assertIn(
+            'echo "trigger_timer=${isTimerTrigger}"',
+            environment_stage,
+        )
+        self.assertNotIn("SCMTriggerCause", environment_stage)
+        self.assertNotIn("UpstreamCause", environment_stage)
+        self.assertNotIn("RemoteCause", environment_stage)
+
+    def test_gray_trigger_allowlist_truth_table(self):
+        environment_start = self.content.index("stage('Environment Check')")
+        environment_end = self.content.index(
+            "stage('Install Dependencies')",
+            environment_start,
+        )
+        environment_stage = self.content[environment_start:environment_end]
+        allowed_causes = set(
+            re.findall(
+                r"getBuildCauses\(\s*'([^']+)'\s*\)",
+                environment_stage,
+            )
+        )
+        manual = "hudson.model.Cause$UserIdCause"
+        timer = "hudson.triggers.TimerTrigger$TimerTriggerCause"
+        scenarios = {
+            "manual": ([manual], True),
+            "timer": ([timer], True),
+            "scm": (["hudson.triggers.SCMTrigger$SCMTriggerCause"], False),
+            "upstream": (["hudson.model.Cause$UpstreamCause"], False),
+            "unknown": (["example.UnknownCause"], False),
+            "manual_and_timer": ([manual, timer], True),
+        }
+
+        for name, (causes, expected) in scenarios.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    expected,
+                    any(cause in allowed_causes for cause in causes),
+                )
+
     def test_chromium_is_installed_and_smoke_launched(self):
         self.assertIn(
             "PLAYWRIGHT_BROWSER_CHANNEL = 'chromium'",
