@@ -2,6 +2,9 @@ from playwright_checks.runtime.models import RuntimeFinding, SEVERITY_ORDER
 from playwright_checks.utils.waits import selector_for
 
 
+MAX_RUNTIME_ELEMENT_PROBES = 200
+
+
 DEFAULT_ERROR_PAGE_PATTERNS = {
     "security_challenge": [
         "access denied",
@@ -207,11 +210,16 @@ def _selector_definitions(values, default_prefix):
             name = item.get("name") or f"{default_prefix}_{index}"
             allow_text_patterns = item.get("allow_text_patterns", [])
             requires_visible = item.get("visible", True)
+            requires_non_empty_text = bool(
+                item.get("requires_non_empty_text", False)
+                or str(name) == "product.price"
+            )
         else:
             selector = item
             name = f"{default_prefix}_{index}"
             allow_text_patterns = []
             requires_visible = True
+            requires_non_empty_text = False
         if selector:
             definitions.append(
                 {
@@ -219,6 +227,7 @@ def _selector_definitions(values, default_prefix):
                     "selector": selector,
                     "allow_text_patterns": list(allow_text_patterns or []),
                     "requires_visible": bool(requires_visible),
+                    "requires_non_empty_text": requires_non_empty_text,
                 }
             )
     return definitions
@@ -284,6 +293,8 @@ def _evaluate_selector_definitions(page, definitions, body_text):
         name = definition["name"]
         locator_value = definition["selector"]
         requires_visible = definition["requires_visible"]
+        requires_non_empty_text = definition["requires_non_empty_text"]
+        selector = None
         try:
             selector = (
                 selector_for(tuple(locator_value))
@@ -292,8 +303,62 @@ def _evaluate_selector_definitions(page, definitions, body_text):
             )
             locator = page.locator(selector)
             count = locator.count()
-            visible = bool(count and locator.first.is_visible())
-            satisfied = visible if requires_visible else count > 0
+            probe = locator.evaluate_all(
+                """
+                (elements, options) => {
+                  const limit = Math.min(elements.length, options.limit);
+                  let checkedCount = 0;
+                  let matchedIndex = null;
+                  let visible = false;
+
+                  for (let index = 0; index < limit; index += 1) {
+                    checkedCount += 1;
+                    const element = elements[index];
+                    if (!(element instanceof Element)) {
+                      continue;
+                    }
+
+                    const style = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    const nodeVisible =
+                      style.display !== "none" &&
+                      style.visibility !== "hidden" &&
+                      Number(style.opacity || 1) > 0 &&
+                      rect.width > 0 &&
+                      rect.height > 0;
+                    visible = visible || nodeVisible;
+
+                    const text = typeof element.innerText === "string"
+                      ? element.innerText
+                      : (element.textContent || "");
+                    const hasText = text.trim().length > 0;
+                    const satisfiesVisibility =
+                      !options.requiresVisible || nodeVisible;
+                    const satisfiesText =
+                      !options.requiresNonEmptyText || hasText;
+                    if (satisfiesVisibility && satisfiesText) {
+                      matchedIndex = index;
+                      break;
+                    }
+                  }
+
+                  return {
+                    checkedCount,
+                    matchedIndex,
+                    visible,
+                  };
+                }
+                """,
+                {
+                    "limit": MAX_RUNTIME_ELEMENT_PROBES,
+                    "requiresVisible": requires_visible,
+                    "requiresNonEmptyText": requires_non_empty_text,
+                },
+            )
+            visible = bool(probe.get("visible"))
+            matched_index = probe.get("matchedIndex")
+            checked_count = int(probe.get("checkedCount", 0) or 0)
+            satisfied = matched_index is not None
             satisfied_by_text = False
             if not satisfied and any(
                 str(pattern).lower() in lowered_body
@@ -304,19 +369,34 @@ def _evaluate_selector_definitions(page, definitions, body_text):
             results.append(
                 {
                     "name": name,
+                    "selector": selector,
                     "count": count,
+                    "match_count": count,
                     "visible": visible,
                     "satisfied": satisfied,
                     "satisfied_by_text": satisfied_by_text,
+                    "matched_index": matched_index,
+                    "checked_count": checked_count,
+                    "probe_limit": MAX_RUNTIME_ELEMENT_PROBES,
+                    "probe_truncated": count > MAX_RUNTIME_ELEMENT_PROBES,
+                    "requires_non_empty_text": requires_non_empty_text,
                 }
             )
         except Exception as error:
             results.append(
                 {
                     "name": name,
+                    "selector": selector,
                     "count": 0,
+                    "match_count": 0,
                     "visible": False,
                     "satisfied": False,
+                    "satisfied_by_text": False,
+                    "matched_index": None,
+                    "checked_count": 0,
+                    "probe_limit": MAX_RUNTIME_ELEMENT_PROBES,
+                    "probe_truncated": False,
+                    "requires_non_empty_text": requires_non_empty_text,
                     "probe_error": f"{type(error).__name__}: {error}",
                 }
             )
