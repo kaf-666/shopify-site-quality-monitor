@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import uuid
+from contextlib import nullcontext
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -150,89 +151,96 @@ def open_page_with_retry(
     on_navigation_attempt=None,
     attempt_offset=0,
     navigation_sequence=1,
+    navigation_attempt_phase=None,
 ):
     navigation_attempts = []
     for sequence_attempt in range(1, attempts + 1):
         attempt = attempt_offset + sequence_attempt
         response = None
-        try:
-            response = page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=45000,
-            )
-            status = response.status if response else None
-            if is_terminal_main_document_status(status):
-                raise TerminalMainDocumentError(status, page.url)
-            assert_page_not_blocked(page)
-            wait_until_ready(page)
-            time.sleep(1)
-            assert_page_not_blocked(page)
-            wait_until_ready(page)
-            final_url = page.url
-            redirect_chain = _response_redirect_chain(response, url)
-            attempt_result = {
-                "attempt": attempt,
-                "navigation_sequence": navigation_sequence,
-                "sequence_attempt": sequence_attempt,
-                "requested_url": url,
-                "state": "succeeded",
-                "final_url": final_url,
-                "status": status,
-                "redirected": final_url.rstrip("/") != url.rstrip("/"),
-                "redirect_chain": redirect_chain,
-                "timestamp": time.time(),
-            }
-            navigation_attempts.append(attempt_result)
-            if on_navigation_attempt:
-                _safe_navigation_callback(
-                    on_navigation_attempt,
-                    attempt_result,
-                )
-            return {
-                "requested_url": url,
-                "final_url": final_url,
-                "status": status,
-                "main_document_status": status,
-                "redirected": attempt_result["redirected"],
-                "redirect_chain": redirect_chain,
-                "navigation_attempts": navigation_attempts,
-                "navigation_error": None,
-            }
-        except AccessBlockedError as error:
-            navigation_attempts.append(
-                _report_navigation_attempt(
-                    on_navigation_attempt,
-                    attempt,
-                    navigation_sequence,
-                    sequence_attempt,
+        phase_context = (
+            navigation_attempt_phase(sequence_attempt)
+            if navigation_attempt_phase
+            else nullcontext()
+        )
+        with phase_context:
+            try:
+                response = page.goto(
                     url,
-                    page,
-                    response,
-                    error,
+                    wait_until="domcontentloaded",
+                    timeout=45000,
                 )
-            )
-            raise
-        except Exception as error:
-            navigation_attempts.append(
-                _report_navigation_attempt(
-                    on_navigation_attempt,
-                    attempt,
-                    navigation_sequence,
-                    sequence_attempt,
-                    url,
-                    page,
-                    response,
-                    error,
+                status = response.status if response else None
+                if is_terminal_main_document_status(status):
+                    raise TerminalMainDocumentError(status, page.url)
+                assert_page_not_blocked(page)
+                wait_until_ready(page)
+                time.sleep(1)
+                assert_page_not_blocked(page)
+                wait_until_ready(page)
+                final_url = page.url
+                redirect_chain = _response_redirect_chain(response, url)
+                attempt_result = {
+                    "attempt": attempt,
+                    "navigation_sequence": navigation_sequence,
+                    "sequence_attempt": sequence_attempt,
+                    "requested_url": url,
+                    "state": "succeeded",
+                    "final_url": final_url,
+                    "status": status,
+                    "redirected": final_url.rstrip("/") != url.rstrip("/"),
+                    "redirect_chain": redirect_chain,
+                    "timestamp": time.time(),
+                }
+                navigation_attempts.append(attempt_result)
+                if on_navigation_attempt:
+                    _safe_navigation_callback(
+                        on_navigation_attempt,
+                        attempt_result,
+                    )
+                return {
+                    "requested_url": url,
+                    "final_url": final_url,
+                    "status": status,
+                    "main_document_status": status,
+                    "redirected": attempt_result["redirected"],
+                    "redirect_chain": redirect_chain,
+                    "navigation_attempts": navigation_attempts,
+                    "navigation_error": None,
+                }
+            except AccessBlockedError as error:
+                navigation_attempts.append(
+                    _report_navigation_attempt(
+                        on_navigation_attempt,
+                        attempt,
+                        navigation_sequence,
+                        sequence_attempt,
+                        url,
+                        page,
+                        response,
+                        error,
+                    )
                 )
-            )
-            if sequence_attempt == attempts:
                 raise
-            print(
-                f"{label} page not ready, retry "
-                f"{sequence_attempt}/{attempts}"
-            )
-            time.sleep(delay)
+            except Exception as error:
+                navigation_attempts.append(
+                    _report_navigation_attempt(
+                        on_navigation_attempt,
+                        attempt,
+                        navigation_sequence,
+                        sequence_attempt,
+                        url,
+                        page,
+                        response,
+                        error,
+                    )
+                )
+                if sequence_attempt == attempts:
+                    raise
+                print(
+                    f"{label} page not ready, retry "
+                    f"{sequence_attempt}/{attempts}"
+                )
+                time.sleep(delay)
 
 
 def _report_navigation_attempt(

@@ -1293,7 +1293,8 @@ def run():
         page_model.wait_until_ready()
         collect_runtime_health_fail_open(page_model.runtime)
 
-        variant_results, variant_failures = test_variants(ctx, page_model)
+        with page_model.runtime.phase("variant_interaction"):
+            variant_results, variant_failures = test_variants(ctx, page_model)
         failures.extend(variant_failures)
 
         sticky_results = {}

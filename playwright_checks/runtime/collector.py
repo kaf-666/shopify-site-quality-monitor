@@ -1,4 +1,5 @@
 from collections import OrderedDict, defaultdict
+from contextlib import contextmanager
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
@@ -21,6 +22,13 @@ COMMON_TWO_LEVEL_SUFFIXES = {
     "co.nz",
     "co.za",
     "com.mx",
+}
+RUNTIME_PHASES = {
+    "unknown",
+    "navigation",
+    "navigation_retry",
+    "variant_interaction",
+    "finalize",
 }
 
 
@@ -59,7 +67,23 @@ class RuntimeEventCollector:
         self._dropped_by_type = defaultdict(int)
         self._listener_errors = []
         self._started = False
+        self._phase = "unknown"
+        self._navigation_sequence = None
         self.page_crashed = False
+
+    @contextmanager
+    def phase(self, name):
+        if name not in RUNTIME_PHASES:
+            raise ValueError(f"Unsupported Runtime phase: {name!r}")
+        previous = self._phase
+        self._phase = name
+        try:
+            yield self
+        finally:
+            self._phase = previous
+
+    def set_navigation_sequence(self, sequence):
+        self._navigation_sequence = sequence
 
     def start(self):
         if self._started or not self.config.get("enabled", True):
@@ -116,7 +140,10 @@ class RuntimeEventCollector:
 
         fingerprint = event_fingerprint(payload)
         if fingerprint in self._events:
-            self._events[fingerprint]["count"] += 1
+            stored = self._events[fingerprint]
+            stored["count"] += 1
+            stored["last_seen"] = payload["timestamp"]
+            self._add_phase_occurrence(stored, payload["timestamp"])
             return
 
         event_type = payload["event_type"]
@@ -125,8 +152,38 @@ class RuntimeEventCollector:
             return
 
         payload["fingerprint"] = fingerprint
+        payload["phase"] = self._phase
+        payload["navigation_sequence"] = self._navigation_sequence
+        payload["first_seen"] = payload["timestamp"]
+        payload["last_seen"] = payload["timestamp"]
+        payload["phase_occurrences"] = [
+            self._new_phase_occurrence(payload["timestamp"])
+        ]
         self._events[fingerprint] = payload
         self._stored_by_type[event_type] += 1
+
+    def _add_phase_occurrence(self, stored, timestamp):
+        for occurrence in stored["phase_occurrences"]:
+            if (
+                occurrence["phase"] == self._phase
+                and occurrence["navigation_sequence"]
+                == self._navigation_sequence
+            ):
+                occurrence["count"] += 1
+                occurrence["last_seen"] = timestamp
+                return
+        stored["phase_occurrences"].append(
+            self._new_phase_occurrence(timestamp)
+        )
+
+    def _new_phase_occurrence(self, timestamp):
+        return {
+            "phase": self._phase,
+            "navigation_sequence": self._navigation_sequence,
+            "first_seen": timestamp,
+            "last_seen": timestamp,
+            "count": 1,
+        }
 
     def _on_page_error(self, error):
         self._add(

@@ -89,6 +89,11 @@ class RuntimeEvent:
     blocking: bool = True
     count: int = 1
     fingerprint: str | None = None
+    phase: str = "unknown"
+    navigation_sequence: int | None = None
+    first_seen: str | None = None
+    last_seen: str | None = None
+    phase_occurrences: list[dict] = field(default_factory=list)
 
     def to_dict(self):
         payload = {
