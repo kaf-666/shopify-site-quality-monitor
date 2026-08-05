@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 from playwright_checks.core.config_loader import get_runtime_health_config
 from playwright_checks.core.paths import current_run_id, relative_to_project
 from playwright_checks.core.request_headers import signed_request_profile
@@ -70,10 +72,19 @@ class RuntimeHealthSession:
 
     def begin_navigation(self):
         self._navigation_sequence += 1
+        self.collector.set_navigation_sequence(self._navigation_sequence)
         return {
             "attempt_offset": len(self.navigation.attempts),
             "navigation_sequence": self._navigation_sequence,
         }
+
+    def phase(self, name):
+        return self.collector.phase(name)
+
+    def navigation_attempt_phase(self, sequence_attempt):
+        return self.phase(
+            "navigation" if sequence_attempt == 1 else "navigation_retry"
+        )
 
     def record_navigation_attempt(self, attempt):
         self.navigation.attempts.append(sanitize_payload(dict(attempt)))
@@ -550,6 +561,13 @@ class FailOpenRuntimeHealthSession:
             "navigation_sequence": self._navigation_sequence,
         }
 
+    @staticmethod
+    def phase(_name):
+        return nullcontext()
+
+    def navigation_attempt_phase(self, _sequence_attempt):
+        return self.phase("unknown")
+
     def complete_navigation(self, result=None, error=None):
         return None
 
@@ -646,13 +664,16 @@ def record_runtime_error_fail_open(session, error, phase):
 def finalize_runtime_health_fail_open(session, site, page_name, viewport):
     visual_status = "not_run"
     try:
-        session.capture_post_visual_state()
-        visual_status = get_page_visual_status(
-            site,
-            viewport,
-            page_name,
-        )
-        summary = session.finalize(visual_status)
+        phase = getattr(session, "phase", None)
+        phase_context = phase("finalize") if phase else nullcontext()
+        with phase_context:
+            session.capture_post_visual_state()
+            visual_status = get_page_visual_status(
+                site,
+                viewport,
+                page_name,
+            )
+            summary = session.finalize(visual_status)
         return runtime_failure_messages(summary)
     except Exception as error:
         summary = _finalize_fallback_summary(

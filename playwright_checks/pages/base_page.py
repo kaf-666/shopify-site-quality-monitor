@@ -70,6 +70,9 @@ class BasePage:
                     "navigation_sequence",
                     1,
                 ),
+                navigation_attempt_phase=(
+                    self.runtime.navigation_attempt_phase
+                ),
             )
         except Exception as error:
             try:
