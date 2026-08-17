@@ -164,6 +164,20 @@ pages:
       cart_btn:
         - css
         - "button.js-mini-cart-trigger"
+    readonly_interactions:
+      mobile_menu:
+        trigger:
+          - css
+          - "button[popovertarget='slideout-mobile-navigation'][popovertargetaction='show']"
+        panel:
+          - css
+          - "#slideout-mobile-navigation"
+        close:
+          - css
+          - "#slideout-mobile-navigation button[popovertargetaction='hide']"
+        dismiss_obstruction:
+          - css
+          - ".ecomsend__Modal__CloseButton[aria-label='No, thanks']"
     dom_presence:
       mobile_navigation_drawer:
         - css

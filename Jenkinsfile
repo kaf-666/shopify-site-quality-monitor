@@ -16,6 +16,7 @@ pipeline {
     }
 
     environment {
+        CI = 'true'
         VISUAL_RUN_ID = "jenkins-${BUILD_NUMBER}-mondressy-us-runtime-gray"
         PLAYWRIGHT_BROWSER_CHANNEL = 'chromium'
         RUNTIME_HEALTH_ENABLED = 'true'
@@ -60,6 +61,11 @@ pipeline {
                             'timer trigger.'
                         )
                     }
+                    env.HEALTH_TRIGGER = (
+                        isTimerTrigger ? 'SCHEDULED' : 'MANUAL'
+                    )
+                    echo 'health_scheduler=JENKINS'
+                    echo "health_trigger=${env.HEALTH_TRIGGER}"
 
                     withCredentials([
                         string(
@@ -187,7 +193,9 @@ pipeline {
                                     .venv/bin/python -u run_all.py \
                                         --site mondressy_US \
                                         --viewport all \
-                                        --page all
+                                        --page all \
+                                        --scheduler JENKINS \
+                                        --trigger "$HEALTH_TRIGGER"
                                 ''',
                                 returnStatus: true
                             ).toString()
@@ -197,7 +205,9 @@ pipeline {
                                     @.venv\\Scripts\\python.exe -u run_all.py ^
                                         --site mondressy_US ^
                                         --viewport all ^
-                                        --page all
+                                        --page all ^
+                                        --scheduler JENKINS ^
+                                        --trigger "%HEALTH_TRIGGER%"
                                 ''',
                                 returnStatus: true
                             ).toString()
@@ -299,11 +309,23 @@ pipeline {
                                 "artifacts/${env.VISUAL_RUN_ID}/artifact-summary.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/gray-summary.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/visual-results.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/health-report.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/health-report.html," +
+                                "artifacts/${env.VISUAL_RUN_ID}/site-profile.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/test-plan.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/run-manifest.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/run-summary.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/shadow-check-results.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/shadow-observations.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/shadow-comparison.json," +
+                                "artifacts/${env.VISUAL_RUN_ID}/shadow-history-summary.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/artifact-manifest.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/runtime/*.json," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/current/*.png," +
                                 "artifacts/${env.VISUAL_RUN_ID}/**/diff/*.png," +
-                                "reports/visual-results.json"
+                                "reports/visual-results.json," +
+                                "reports/health-report.json," +
+                                "reports/health-report.html"
                             ),
                             excludes: (
                                 "artifacts/${env.VISUAL_RUN_ID}/**/.tmp/**," +

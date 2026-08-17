@@ -29,6 +29,8 @@ class JenkinsfileStaticTests(unittest.TestCase):
         self.assertIn("--site mondressy_US", self.content)
         self.assertIn("--viewport all", self.content)
         self.assertIn("--page all", self.content)
+        self.assertIn("--scheduler JENKINS", self.content)
+        self.assertIn("--trigger", self.content)
         self.assertNotIn("--viewport mobile", self.content)
         self.assertNotIn("--page home", self.content)
         self.assertNotIn("--page collection", self.content)
@@ -40,6 +42,7 @@ class JenkinsfileStaticTests(unittest.TestCase):
 
     def test_runtime_and_side_effect_controls_are_explicit(self):
         expected = (
+            "CI = 'true'",
             "RUNTIME_HEALTH_REPORT_ONLY = 'true'",
             "RUNTIME_HEALTH_AFFECT_EXIT_CODE = 'false'",
             "RUNTIME_HEALTH_FAIL_ON_WARNING = 'false'",
@@ -188,6 +191,10 @@ class JenkinsfileStaticTests(unittest.TestCase):
             self.assertIn(value, self.content)
         self.assertIn("artifact-summary.json", self.content)
         self.assertIn("artifact-manifest.json", self.content)
+        self.assertIn("run-manifest.json", self.content)
+        self.assertIn("run-summary.json", self.content)
+        self.assertIn("shadow-comparison.json", self.content)
+        self.assertIn("shadow-history-summary.json", self.content)
         self.assertIn("runtime/*.json", self.content)
         self.assertIn("current/*.png", self.content)
         self.assertIn("diff/*.png", self.content)

@@ -18,6 +18,11 @@ if hasattr(sys.stderr, "reconfigure"):
 SITE_CONFIG_ENV = "VISUAL_SITE_CONFIG"
 VIEWPORT_ENV = "VISUAL_VIEWPORT"
 PAGE_ENV = "VISUAL_PAGE"
+RUN_ID_ENV = "VISUAL_RUN_ID"
+SCHEDULER_ENV = "HEALTH_SCHEDULER"
+TRIGGER_ENV = "HEALTH_TRIGGER"
+RUNTIME_MODE_ENV = "HEALTH_RUNTIME_MODE"
+SHADOW_EXECUTOR_ENV = "HEALTH_SHADOW_EXECUTOR_ENABLED"
 ALL_VALUE = "all"
 VIEWPORT_CHOICES = ("desktop", "mobile", ALL_VALUE)
 PAGE_CHOICES = ("home", "collection", "product", ALL_VALUE)
@@ -69,6 +74,43 @@ def parse_args(argv=None):
         action="store_true",
         help="Validate local config and baseline directories without opening a browser.",
     )
+    parser.add_argument(
+        "--run-id",
+        help="Stable run ID used by all artifacts and scheduler metadata.",
+    )
+    parser.add_argument(
+        "--scheduler",
+        choices=("MANUAL", "CODEX", "HERMES", "JENKINS", "OTHER"),
+        type=str.upper,
+        help="Scheduler metadata only; it never changes health-check behavior.",
+    )
+    parser.add_argument(
+        "--trigger",
+        choices=("MANUAL", "SCHEDULED", "OTHER"),
+        type=str.upper,
+        help="Trigger metadata recorded in run-manifest.json.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("MONITOR", "DIAGNOSE", "DISCOVER"),
+        type=str.upper,
+        default="MONITOR",
+        help="Runtime mode contract. Only MONITOR is implemented in Phase 3.",
+    )
+    shadow = parser.add_mutually_exclusive_group()
+    shadow.add_argument(
+        "--shadow-executor",
+        dest="shadow_executor",
+        action="store_true",
+        help="Run the new executor pipeline as a non-gating sidecar.",
+    )
+    shadow.add_argument(
+        "--no-shadow-executor",
+        dest="shadow_executor",
+        action="store_false",
+        help="Disable the shadow executor sidecar.",
+    )
+    parser.set_defaults(shadow_executor=None)
     return parser.parse_args(argv)
 
 
@@ -86,6 +128,23 @@ def apply_cli_args(args):
         os.environ[PAGE_ENV] = args.page
     else:
         os.environ.pop(PAGE_ENV, None)
+
+    if args.run_id:
+        os.environ[RUN_ID_ENV] = args.run_id
+    if args.scheduler:
+        os.environ[SCHEDULER_ENV] = args.scheduler
+    if args.trigger:
+        os.environ[TRIGGER_ENV] = args.trigger
+    os.environ[RUNTIME_MODE_ENV] = args.mode
+    if args.shadow_executor is not None:
+        os.environ[SHADOW_EXECUTOR_ENV] = (
+            "true" if args.shadow_executor else "false"
+        )
+
+    if args.mode == "MONITOR":
+        os.environ["ALLOW_BASELINE_INIT"] = "false"
+        os.environ["FORCE_BASELINE_INIT"] = "false"
+        os.environ["ALLOW_SIDE_EFFECT_FLOW"] = "false"
 
 
 def site_config_path(site_name):
@@ -529,6 +588,319 @@ def validate_runtime_health(errors, path, value, warnings=None):
                     )
 
 
+def validate_health_check(errors, path, value, warnings=None):
+    warnings = warnings if warnings is not None else []
+    if value is None:
+        return
+    if not isinstance(value, dict):
+        errors.append(f"{path} must be a mapping")
+        return
+
+    known_keys = {
+        "enabled",
+        "report",
+        "ai",
+        "false_positive_control",
+        "interaction_policy",
+        "shadow_executor",
+    }
+    for key in value:
+        if key not in known_keys:
+            warnings.append(
+                f"{path}.{key} is not recognized and will be ignored"
+            )
+
+    if "enabled" in value and not isinstance(value["enabled"], bool):
+        errors.append(f"{path}.enabled must be a boolean")
+
+    report = value.get("report")
+    if report is not None:
+        if not isinstance(report, dict):
+            errors.append(f"{path}.report must be a mapping")
+        else:
+            for key, item in report.items():
+                if key not in {"json", "html", "output_dir"}:
+                    warnings.append(
+                        f"{path}.report.{key} is not recognized and will be ignored"
+                    )
+                elif key in {"json", "html"} and not isinstance(item, bool):
+                    errors.append(f"{path}.report.{key} must be a boolean")
+                elif key == "output_dir" and (
+                    not isinstance(item, str) or not item.strip()
+                ):
+                    errors.append(
+                        f"{path}.report.output_dir must be a non-empty string"
+                    )
+
+    ai = value.get("ai")
+    if ai is not None:
+        if not isinstance(ai, dict):
+            errors.append(f"{path}.ai must be a mapping")
+        else:
+            for key, item in ai.items():
+                if key not in {
+                    "enabled",
+                    "provider",
+                    "max_findings",
+                    "max_evidence_per_finding",
+                    "self_healing",
+                }:
+                    warnings.append(
+                        f"{path}.ai.{key} is not recognized and will be ignored"
+                    )
+                elif key == "enabled" and not isinstance(item, bool):
+                    errors.append(f"{path}.ai.enabled must be a boolean")
+                elif key == "provider" and (
+                    not isinstance(item, str) or not item.strip()
+                ):
+                    errors.append(f"{path}.ai.provider must be a non-empty string")
+                elif key in {"max_findings", "max_evidence_per_finding"} and (
+                    not isinstance(item, int)
+                    or isinstance(item, bool)
+                    or item <= 0
+                ):
+                    errors.append(f"{path}.ai.{key} must be a positive integer")
+
+            self_healing = ai.get("self_healing")
+            if self_healing is not None:
+                if not isinstance(self_healing, dict):
+                    errors.append(f"{path}.ai.self_healing must be a mapping")
+                else:
+                    for key, item in self_healing.items():
+                        if key not in {
+                            "suggestions_only",
+                            "approval_required",
+                            "auto_apply",
+                        }:
+                            warnings.append(
+                                f"{path}.ai.self_healing.{key} is not recognized "
+                                "and will be ignored"
+                            )
+                        elif not isinstance(item, bool):
+                            errors.append(
+                                f"{path}.ai.self_healing.{key} must be a boolean"
+                            )
+                    if self_healing.get("suggestions_only") is False:
+                        errors.append(
+                            f"{path}.ai.self_healing.suggestions_only must remain true"
+                        )
+                    if self_healing.get("approval_required") is False:
+                        errors.append(
+                            f"{path}.ai.self_healing.approval_required must remain true"
+                        )
+                    if self_healing.get("auto_apply") is True:
+                        errors.append(
+                            f"{path}.ai.self_healing.auto_apply must remain false"
+                        )
+
+    false_positive = value.get("false_positive_control")
+    if false_positive is not None:
+        if not isinstance(false_positive, dict):
+            errors.append(f"{path}.false_positive_control must be a mapping")
+        else:
+            allowed_keys = {
+                "minimum_critical_alert_evidence",
+                "suppress_third_party_noise",
+                "suppress_expected_change",
+                "suppress_selector_change",
+                "recovered_retry_status",
+                "blocked_requires_repeated_confirmation",
+            }
+            for key, item in false_positive.items():
+                item_path = f"{path}.false_positive_control.{key}"
+                if key not in allowed_keys:
+                    warnings.append(
+                        f"{item_path} is not recognized and will be ignored"
+                    )
+                elif key == "minimum_critical_alert_evidence" and item not in {
+                    "NONE",
+                    "LOW",
+                    "MEDIUM",
+                    "HIGH",
+                }:
+                    errors.append(
+                        f"{item_path} must be one of NONE, LOW, MEDIUM, HIGH"
+                    )
+                elif key == "recovered_retry_status" and item not in {
+                    "PASS",
+                    "WARN",
+                    "FLAKY",
+                }:
+                    errors.append(f"{item_path} must be one of PASS, WARN, FLAKY")
+                elif (
+                    key.startswith("suppress_")
+                    or key == "blocked_requires_repeated_confirmation"
+                ):
+                    if not isinstance(item, bool):
+                        errors.append(f"{item_path} must be a boolean")
+
+    interaction = value.get("interaction_policy")
+    if interaction is not None:
+        if not isinstance(interaction, dict):
+            errors.append(f"{path}.interaction_policy must be a mapping")
+        else:
+            allowed_keys = {
+                "allowed_levels",
+                "transactional_requires_explicit_opt_in",
+                "high_risk_allowed",
+                "capability_overrides",
+            }
+            for key, item in interaction.items():
+                item_path = f"{path}.interaction_policy.{key}"
+                if key not in allowed_keys:
+                    warnings.append(
+                        f"{item_path} is not recognized and will be ignored"
+                    )
+                elif key == "allowed_levels" and (
+                    not isinstance(item, list)
+                    or not item
+                    or any(
+                        level not in {"SAFE", "TRANSACTIONAL_SAFE", "HIGH_RISK"}
+                        for level in item
+                    )
+                ):
+                    errors.append(
+                        f"{item_path} must be a non-empty list of valid risk levels"
+                    )
+                elif key == "capability_overrides":
+                    if not isinstance(item, dict):
+                        errors.append(f"{item_path} must be a mapping")
+                    else:
+                        from playwright_checks.health.capabilities import (
+                            CAPABILITY_RISKS,
+                        )
+                        from playwright_checks.health.models import (
+                            SideEffectLevel,
+                        )
+                        protected = {
+                            name
+                            for name, risk in CAPABILITY_RISKS.items()
+                            if risk == SideEffectLevel.HIGH_RISK
+                        }
+                        for capability, level in item.items():
+                            override_path = f"{item_path}.{capability}"
+                            if (
+                                not isinstance(capability, str)
+                                or not capability.strip()
+                            ):
+                                errors.append(
+                                    f"{item_path} keys must be non-empty strings"
+                                )
+                            elif level not in {
+                                "SAFE",
+                                "TRANSACTIONAL_SAFE",
+                                "HIGH_RISK",
+                            }:
+                                errors.append(
+                                    f"{override_path} must be a valid risk level"
+                                )
+                            elif capability.strip().lower() in protected and (
+                                level != "HIGH_RISK"
+                            ):
+                                errors.append(
+                                    f"{override_path} cannot downgrade a protected "
+                                    "high-risk action"
+                                )
+                elif key != "allowed_levels" and not isinstance(item, bool):
+                    errors.append(f"{item_path} must be a boolean")
+
+    shadow_executor = value.get("shadow_executor")
+    if shadow_executor is not None:
+        shadow_path = f"{path}.shadow_executor"
+        if not isinstance(shadow_executor, dict):
+            errors.append(f"{shadow_path} must be a mapping")
+        else:
+            allowed_keys = {
+                "enabled",
+                "timeout_ms",
+                "max_retries",
+                "retry_delay_ms",
+                "retry_on_timeout",
+                "retry_on_error",
+                "history",
+                "maturity",
+            }
+            for key, item in shadow_executor.items():
+                item_path = f"{shadow_path}.{key}"
+                if key not in allowed_keys:
+                    warnings.append(
+                        f"{item_path} is not recognized and will be ignored"
+                    )
+                elif key in {
+                    "enabled",
+                    "retry_on_timeout",
+                    "retry_on_error",
+                } and not isinstance(item, bool):
+                    errors.append(f"{item_path} must be a boolean")
+                elif key == "timeout_ms" and (
+                    not isinstance(item, int)
+                    or isinstance(item, bool)
+                    or item <= 0
+                ):
+                    errors.append(f"{item_path} must be a positive integer")
+                elif key in {"max_retries", "retry_delay_ms"} and (
+                    not isinstance(item, int)
+                    or isinstance(item, bool)
+                    or item < 0
+                ):
+                    errors.append(
+                        f"{item_path} must be a non-negative integer"
+                    )
+            history = shadow_executor.get("history")
+            if history is not None:
+                history_path = f"{shadow_path}.history"
+                if not isinstance(history, dict):
+                    errors.append(f"{history_path} must be a mapping")
+                else:
+                    for key, item in history.items():
+                        item_path = f"{history_path}.{key}"
+                        if key not in {"enabled", "root"}:
+                            warnings.append(
+                                f"{item_path} is not recognized and will be ignored"
+                            )
+                        elif key == "enabled" and not isinstance(item, bool):
+                            errors.append(f"{item_path} must be a boolean")
+                        elif key == "root" and (
+                            not isinstance(item, str) or not item.strip()
+                        ):
+                            errors.append(
+                                f"{item_path} must be a non-empty string"
+                            )
+            maturity = shadow_executor.get("maturity")
+            if maturity is not None:
+                maturity_path = f"{shadow_path}.maturity"
+                allowed_maturity = {
+                    "overall_coverage_percent",
+                    "critical_coverage_percent",
+                    "executable_coverage_percent",
+                    "result_parity_percent",
+                    "evidence_parity_percent",
+                    "max_policy_regressions",
+                    "max_executor_errors",
+                    "max_executor_timeouts",
+                    "required_consecutive_stable_runs",
+                    "require_result_parity_sample",
+                    "require_evidence_parity_sample",
+                }
+                if not isinstance(maturity, dict):
+                    errors.append(f"{maturity_path} must be a mapping")
+                else:
+                    for key in maturity:
+                        if key not in allowed_maturity:
+                            warnings.append(
+                                f"{maturity_path}.{key} is not recognized and will be ignored"
+                            )
+                    try:
+                        from playwright_checks.health.shadow_maturity import (
+                            ShadowMaturityPolicy,
+                        )
+                        ShadowMaturityPolicy.from_config(
+                            {"shadow_executor": shadow_executor}
+                        )
+                    except (TypeError, ValueError) as error:
+                        errors.append(f"{maturity_path}: {error}")
+
+
 def validate_settings(errors, warnings):
     from playwright_checks.core.config_loader import load_settings
 
@@ -539,6 +911,12 @@ def validate_settings(errors, warnings):
         errors,
         "configs/settings.yaml runtime_health",
         settings.get("runtime_health"),
+        warnings,
+    )
+    validate_health_check(
+        errors,
+        "configs/settings.yaml health_check",
+        settings.get("health_check"),
         warnings,
     )
     viewports = settings.get("viewports")
@@ -584,6 +962,7 @@ def baseline_viewports(args, settings_run_viewports):
 
 def validate_config(args):
     from playwright_checks.core.config_loader import get_page_config, load_site_config
+    from playwright_checks.health.profile_artifacts import build_profile_bundle
 
     errors = []
     warnings = []
@@ -613,6 +992,12 @@ def validate_config(args):
         errors,
         "runtime_health",
         site_config.get("runtime_health"),
+        warnings,
+    )
+    validate_health_check(
+        errors,
+        "health_check",
+        site_config.get("health_check"),
         warnings,
     )
 
@@ -682,6 +1067,20 @@ def validate_config(args):
         if page_name == "product":
             validate_selector(errors, "pages.product.variant_inputs", page_config.get("variant_inputs"))
 
+    try:
+        profile_bundle = build_profile_bundle(site_config)
+        print(
+            "site profile: "
+            f"{profile_bundle.profile.site_identity.site_type.value}, "
+            f"pages={len(profile_bundle.profile.pages)}, "
+            f"planned_checks={len(profile_bundle.plan.checks)}"
+        )
+    except (TypeError, ValueError) as exc:
+        errors.append(
+            "site profile / capability registry validation failed: "
+            f"{type(exc).__name__}: {exc}"
+        )
+
     if not errors:
         print("pages: home, collection, product")
         print("selectors: OK")
@@ -747,20 +1146,136 @@ def run_stage(label, folder, script):
     return True
 
 
+def run_scheduler_neutral_runtime(args):
+    from playwright_checks.core.config_loader import (
+        load_settings,
+        load_site_config,
+    )
+    from playwright_checks.core.paths import artifact_root, current_run_id
+    from playwright_checks.health.config import get_health_check_config
+    from playwright_checks.health.execution_models import RuntimeMode
+    from playwright_checks.health.shadow_runtime import shadow_executor_enabled
+    from playwright_checks.runtime.run_manifest import (
+        RunManifestStore,
+        SchedulerType,
+        TriggerType,
+        build_run_manifest,
+    )
+    from playwright_checks.runtime.run_summary import (
+        build_machine_run_summary,
+        stdout_contract,
+        write_machine_run_summary,
+    )
+
+    settings = load_settings()
+    site_name = selected_site_name(args, settings)
+    site_config = load_site_config(site_name)
+    run_id = current_run_id()
+    run_root = artifact_root() / run_id
+    mode = RuntimeMode(args.mode)
+    scheduler = SchedulerType(
+        str(
+            args.scheduler
+            or os.environ.get(SCHEDULER_ENV)
+            or "MANUAL"
+        ).upper()
+    )
+    trigger = TriggerType(
+        str(
+            args.trigger
+            or os.environ.get(TRIGGER_ENV)
+            or "MANUAL"
+        ).upper()
+    )
+    shadow_enabled = shadow_executor_enabled(site_config)
+    health_config = get_health_check_config(site_config)
+    config_path = site_config_path(site_name)
+    config_reference = config_path if config_path else None
+    manifest = build_run_manifest(
+        run_id=run_id,
+        site=site_name,
+        scheduler=scheduler,
+        trigger=trigger,
+        mode=mode,
+        ai_enabled=bool((health_config.get("ai") or {}).get("enabled", False)),
+        transactional_safe_enabled=False,
+        shadow_executor_enabled=shadow_enabled,
+        config_path=config_reference,
+        runtime_metadata={
+            "viewport": args.viewport or "configured",
+            "page": args.page or "all",
+            "artifact_root": "artifacts",
+            "scheduler_behavior_invariant": True,
+        },
+    )
+    store = RunManifestStore(run_root)
+    manifest_path = store.write(manifest)
+    exit_code = 2
+    unsupported = mode != RuntimeMode.MONITOR
+
+    try:
+        if unsupported:
+            print(
+                f"Runtime mode {mode.value} is RESERVED/UNSUPPORTED in Phase 3; "
+                "no browser or health executor was started."
+            )
+        else:
+            passed = run_stage(
+                "Playwright visual regression",
+                str(PROJECT_ROOT),
+                "playwright_checks.runner.main",
+            )
+            exit_code = 0 if passed else 1
+            if passed:
+                print("\n" + "=" * 60)
+                print("All checks passed")
+                print("=" * 60)
+    except Exception as error:
+        print(
+            "Runtime orchestration failed: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        exit_code = 2
+    finally:
+        manifest.finish(exit_code, unsupported=unsupported)
+        manifest_path = store.write(manifest)
+        health_report = run_root / "health-report.json"
+        shadow_comparison = run_root / "shadow-comparison.json"
+        shadow_history_summary = run_root / "shadow-history-summary.json"
+        summary = build_machine_run_summary(
+            run_id=run_id,
+            legacy_exit_code=exit_code,
+            health_report_path=(
+                health_report.resolve() if health_report.is_file() else None
+            ),
+            manifest_path=manifest_path,
+            shadow_comparison_path=(
+                shadow_comparison.resolve()
+                if shadow_comparison.is_file()
+                else None
+            ),
+            shadow_history_summary_path=(
+                shadow_history_summary.resolve()
+                if shadow_history_summary.is_file()
+                else None
+            ),
+            overall_status_override="UNSUPPORTED" if unsupported else None,
+        )
+        summary_path = write_machine_run_summary(summary, run_root)
+        for line in stdout_contract(summary, summary_path):
+            print(line)
+    return exit_code
+
+
 def main(argv=None):
     args = parse_args(argv)
     apply_cli_args(args)
 
     if args.validate_config:
-        sys.exit(validate_config(args))
+        return validate_config(args)
 
-    if not run_stage("Playwright visual regression", ".", "playwright_checks.runner.main"):
-        sys.exit(1)
-
-    print("\n" + "=" * 60)
-    print("All checks passed")
-    print("=" * 60)
-
+    return run_scheduler_neutral_runtime(args)
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

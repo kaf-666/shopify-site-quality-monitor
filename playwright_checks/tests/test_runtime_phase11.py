@@ -84,7 +84,7 @@ class RuntimeExitPolicyTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "JENKINS_URL": "https://jenkins.test",
+                "CI": "true",
                 "VISUAL_STRICT_WARNINGS": "false",
             },
             clear=True,
@@ -120,6 +120,11 @@ class RuntimeExitPolicyTests(unittest.TestCase):
                         "write_results",
                         return_value="<memory>",
                     ),
+                    patch.object(
+                        runner,
+                        "write_health_reports_fail_open",
+                        return_value={"json": None, "html": None},
+                    ),
                 ):
                     self.assertEqual(expected, runner.run_all())
 
@@ -138,7 +143,7 @@ class VisualStrictWarningEnvironmentTests(unittest.TestCase):
             with self.subTest(value=value), patch.dict(
                 os.environ,
                 {
-                    "JENKINS_URL": "https://jenkins.test",
+                    "CI": "true",
                     "VISUAL_STRICT_WARNINGS": value,
                 },
                 clear=True,
@@ -148,7 +153,7 @@ class VisualStrictWarningEnvironmentTests(unittest.TestCase):
     def test_unset_uses_ci_then_config_and_invalid_falls_back(self):
         with patch.dict(
             os.environ,
-            {"JENKINS_URL": "https://jenkins.test"},
+            {"CI": "true"},
             clear=True,
         ):
             self.assertTrue(visual._strict_warnings_enabled())
@@ -224,7 +229,7 @@ class RuntimeConfigPolicyTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "JENKINS_URL": "https://jenkins.test",
+                "CI": "true",
                 "VISUAL_STRICT_WARNINGS": "not-a-boolean",
             },
             clear=True,

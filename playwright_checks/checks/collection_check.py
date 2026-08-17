@@ -17,6 +17,7 @@ from playwright_checks.core.viewport import (
     is_mobile_viewport,
 )
 from playwright_checks.pages.collection_page import CollectionPage
+from playwright_checks.health.observations import record_check_observation
 from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.runtime.session import (
     collect_runtime_health_fail_open,
@@ -463,10 +464,45 @@ def run():
 
         collect_runtime_health_fail_open(page_model.runtime)
 
-        failures.extend(dom_check(page, page_model.modules))
-        failures.extend(dom_presence_check(page, page_model.dom_presence))
-        failures.extend(check_product_count(ctx, page_model))
-        failures.extend(check_pagination(page_model))
+        dom_failures = dom_check(page, page_model.modules)
+        record_check_observation(
+            ctx,
+            "dom_modules",
+            "dom_content",
+            dom_failures,
+            capability="product_listing",
+        )
+        failures.extend(dom_failures)
+
+        presence_failures = dom_presence_check(page, page_model.dom_presence)
+        record_check_observation(
+            ctx,
+            "dom_presence",
+            "dom_content",
+            presence_failures,
+            capability="product_listing",
+        )
+        failures.extend(presence_failures)
+
+        count_failures = check_product_count(ctx, page_model)
+        record_check_observation(
+            ctx,
+            "product_count",
+            "dom_content",
+            count_failures,
+            capability="product_listing",
+        )
+        failures.extend(count_failures)
+
+        pagination_failures = check_pagination(page_model)
+        record_check_observation(
+            ctx,
+            "pagination",
+            "functional",
+            pagination_failures,
+            capability="pagination",
+        )
+        failures.extend(pagination_failures)
         structure_failures, _structure_results = run_structure_checks(
             ctx,
             page,

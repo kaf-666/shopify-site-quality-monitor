@@ -14,6 +14,7 @@ from playwright_checks.core.test_results import (
 from playwright_checks.checks.context import PageCheckContext
 from playwright_checks.artifacts.screenshot_manager import safe_move
 from playwright_checks.pages.home_page import HomePage
+from playwright_checks.health.observations import record_check_observation
 from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.runtime.session import (
     collect_runtime_health_fail_open,
@@ -473,9 +474,34 @@ def run():
 
         collect_runtime_health_fail_open(page_model.runtime)
 
-        failures.extend(dom_check(page, page_model.modules))
-        failures.extend(dom_presence_check(page, page_model.dom_presence))
-        failures.extend(check_plugins(page_model))
+        dom_failures = dom_check(page, page_model.modules)
+        record_check_observation(
+            ctx,
+            "dom_modules",
+            "dom_content",
+            dom_failures,
+            capability="main_content",
+        )
+        failures.extend(dom_failures)
+
+        presence_failures = dom_presence_check(page, page_model.dom_presence)
+        record_check_observation(
+            ctx,
+            "dom_presence",
+            "dom_content",
+            presence_failures,
+            capability="main_content",
+        )
+        failures.extend(presence_failures)
+
+        plugin_failures = check_plugins(page_model)
+        record_check_observation(
+            ctx,
+            "plugins",
+            "functional",
+            plugin_failures,
+        )
+        failures.extend(plugin_failures)
         stabilize_banner(page, ctx.page_config)
         structure_failures, _structure_results = run_structure_checks(
             ctx,
