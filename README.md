@@ -27,6 +27,9 @@ Current site configurations:
 - `playwright_checks/checks/`: read-only structural and visual checks.
 - `playwright_checks/runtime/`: console, page, network, loading, rendering,
   retry, scoring, evidence, and gray-summary logic.
+- `playwright_checks/health/`: configuration-driven health model, capability
+  profiles, deterministic planning, policy controls, reports, and the optional
+  Shadow executor sidecar.
 - `playwright_checks/utils/`: capture, stabilization, DOM, dynamic-content,
   and image-comparison helpers.
 - `playwright_checks/flows/`: explicitly invoked business flows. Only
@@ -35,9 +38,11 @@ Current site configurations:
 - `playwright_checks/tests/`: unit, Playwright fixture, integration, Jenkins,
   signed-header, and visual-comparison tests.
 - `baselines/`: reviewed baseline images.
-- `artifacts/<run-id>/`: current images, diffs, runtime evidence, a copy of the
-  JSON results, and the run-level gray summary for one run.
-- `reports/visual-results.json`: latest combined visual and page-health results.
+- `artifacts/<run-id>/`: current images, diffs, runtime evidence, visual
+  results, health reports, profile/plan artifacts, and the run-level summaries
+  for one run.
+- `reports/`: latest `visual-results.json` plus `health-report.json` and
+  `health-report.html` when health reporting is enabled.
 - `screenshots/`: legacy baseline location, still readable when fallback is
   enabled.
 
@@ -417,6 +422,24 @@ Run evidence is written beneath:
 artifacts/<run-id>/<site>/<viewport>/<page>/runtime/
 ```
 
+### Health reports and run contract
+
+With the default `health_check.enabled: true`, a `MONITOR` run preserves the
+legacy visual/runtime exit decision and also produces a fail-open health
+sidecar. The latest dashboards are written to:
+
+```text
+reports/health-report.json
+reports/health-report.html
+```
+
+The matching run directory contains copies of those reports plus
+`site-profile.json`, `test-plan.json`, `run-manifest.json`, and
+`run-summary.json`. The manifest records site, scheduler, trigger, mode, and
+the artifact contract; the summary is the machine-readable run outcome. If the
+health sidecar cannot write a report, legacy results and their exit code remain
+valid.
+
 ### Mondressy US full-scope gray summary
 
 The Jenkins gray run covers six independent scopes: Home, Collection, and
@@ -456,6 +479,23 @@ EXACT/PARTIAL/MISSING/NOT_APPLICABLE coverage matrix, and keeps semantic mapping
 coverage separate from completed executable coverage. Add to Cart is split into
 a SAFE, observation-only control check and a default-blocked TRANSACTIONAL_SAFE
 action contract.
+
+Enable the sidecar for one explicit monitoring run with:
+
+```powershell
+.\.venv\Scripts\python.exe run_all.py `
+  --site lavetir_US --viewport desktop --page home `
+  --run-id local-shadow-smoke `
+  --scheduler MANUAL --trigger MANUAL --shadow-executor
+```
+
+`--scheduler` and `--trigger` are recorded as metadata only. `MONITOR` is the
+only implemented runtime mode; it disables baseline initialization and
+side-effect flows. The `--shadow-executor` flag overrides the per-run setting,
+but the sidecar stays non-gating and cannot change baselines, selectors, or site
+configuration. When enabled, the run directory also includes
+`shadow-check-results.json`, `shadow-observations.json`,
+`shadow-comparison.json`, and `shadow-history-summary.json`.
 
 Shadow history is a compact append-only JSONL stream at
 `history/shadow/<site>.jsonl`; each run also writes
