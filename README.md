@@ -175,8 +175,8 @@ $env:VISUAL_STRICT_WARNINGS="1"
 .\.venv\Scripts\python.exe run_all.py --site lavetir_US
 ```
 
-When `CI=true` or `JENKINS_URL` is present, visual warnings are strict by
-default. CI baseline initialization requires both explicit flags:
+When `CI=true` is present, visual warnings are strict by default. CI baseline
+initialization requires both explicit flags:
 
 ```powershell
 $env:ALLOW_BASELINE_INIT="1"
@@ -186,6 +186,24 @@ $env:FORCE_BASELINE_INIT="1"
 
 Baseline updates should normally be reviewed locally and committed under
 `baselines/`, rather than generated automatically in CI.
+
+Screenshot intent is configured centrally under
+`visual.screenshot_policy` in `configs/settings.yaml`:
+
+- `gate` compares against a reviewed baseline and may affect the process exit
+  code.
+- `report_only` still records visual differences, but never affects the exit
+  code. The three full-page captures use this purpose.
+- `evidence_only` skips baseline comparison and is retained only when the
+  artifact policy needs the evidence.
+- `structure_only` runs DOM/layout assertions without a pixel baseline.
+
+The default gate set is intentionally small. Desktop captures Home first
+screen; Collection first screen plus the opened filter; and Product first
+screen, the combined product core, and one applicable changed-variant state.
+Mobile adds the opened navigation menu and uses the filter drawer state. The
+legacy `global.png` and `first_screen.png` baseline filenames remain readable;
+reports expose them as `<page>_full_page` and `<page>_first_screen`.
 
 ### Screenshot lifecycle and retained evidence
 
@@ -320,15 +338,16 @@ Dynamic regions support three strategies:
 - `ignore_visual` performs no pixel comparison but still requires minimum
   visibility and usable dimensions.
 
-For `mondressy_US`, Home product collections use `mask_content`; the Collection
-product grid uses `layout_only`; the configured Product monitoring item remains
-stable and its changeable information uses `mask_content`. Product count,
-order, image, title, price, and availability changes can therefore be reported
-as `CONTENT_CHANGED`. An empty or missing grid, card overlap, unexpected
-columns, mass image failures, horizontal overflow, missing titles/prices,
-missing filter/sort controls, an unavailable monitoring product, a blank
-gallery, or missing purchase controls remains a failure. The runner does not
-switch to a random product or update configuration/baselines automatically.
+Home banners and merchandising carousels, Collection product grids, and Product
+media/information are projected into first-screen and full-page comparison
+masks. Product count, order, image, title, price, availability, campaign copy,
+review count, and pagination-number changes therefore do not become strict
+pixel failures. Their structure remains enforced: an empty grid, card overlap,
+unreasonable responsive columns, mass image failures, horizontal overflow,
+missing titles/prices, missing filter controls, an unavailable monitoring
+product, a blank gallery, or missing purchase controls remains a failure. The
+runner does not switch to a random product or update configuration/baselines
+automatically.
 Declared masks are also projected onto temporary comparison copies of global
 and first-screen captures, so the same operational content does not fail those
 context images. The original capture and every reviewed baseline remain
@@ -428,6 +447,26 @@ the original Python failure before the summary failure. Runtime remains
 report-only. If any scope unexpectedly enables `runtime_affects_exit_code`, the
 gray protection rejects the summary instead of silently enabling a Runtime
 gate.
+
+## Shadow maturity (Phase 3.5A)
+
+The optional executor sidecar now covers configured Home, Collection, and
+Product core signals with generic executors, writes an explicit
+EXACT/PARTIAL/MISSING/NOT_APPLICABLE coverage matrix, and keeps semantic mapping
+coverage separate from completed executable coverage. Add to Cart is split into
+a SAFE, observation-only control check and a default-blocked TRANSACTIONAL_SAFE
+action contract.
+
+Shadow history is a compact append-only JSONL stream at
+`history/shadow/<site>.jsonl`; each run also writes
+`shadow-history-summary.json`. Stability uses same-scope parity, evidence,
+policy/error/timeout and mapping-consistency thresholds. The scheduler and
+Legacy exit status are metadata only. Shadow remains disabled by default,
+non-gating, and unable to update baselines or promote itself to ADVISORY.
+
+See [Phase 3.5A Shadow Maturity](docs/PHASE_3_5A_SHADOW_MATURITY.md) for the
+coverage matrix semantics, real smoke evidence, readiness policy, and remaining
+gaps.
 
 ## Side-effect flow
 

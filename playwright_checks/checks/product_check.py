@@ -13,6 +13,7 @@ from playwright_checks.core.viewport import (
     is_mobile_viewport,
 )
 from playwright_checks.pages.product_page import ProductPage
+from playwright_checks.health.observations import record_check_observation
 from playwright_checks.runtime.evidence import redact_text
 from playwright_checks.runtime.session import (
     collect_runtime_health_fail_open,
@@ -1270,10 +1271,45 @@ def run():
             )
             return failures
 
-        failures.extend(dom_check(page, page_model.modules))
-        failures.extend(dom_presence_check(page, page_model.dom_presence))
-        failures.extend(check_product_content(page_model))
-        failures.extend(check_add_to_cart(page_model))
+        dom_failures = dom_check(page, page_model.modules)
+        record_check_observation(
+            ctx,
+            "dom_modules",
+            "dom_content",
+            dom_failures,
+            capability="product_status",
+        )
+        failures.extend(dom_failures)
+
+        presence_failures = dom_presence_check(page, page_model.dom_presence)
+        record_check_observation(
+            ctx,
+            "dom_presence",
+            "dom_content",
+            presence_failures,
+            capability="product_status",
+        )
+        failures.extend(presence_failures)
+
+        content_failures = check_product_content(page_model)
+        record_check_observation(
+            ctx,
+            "product_content",
+            "dom_content",
+            content_failures,
+            capability="product_title_and_price",
+        )
+        failures.extend(content_failures)
+
+        cart_state_failures = check_add_to_cart(page_model)
+        record_check_observation(
+            ctx,
+            "add_to_cart_state",
+            "functional",
+            cart_state_failures,
+            capability="add_to_cart",
+        )
+        failures.extend(cart_state_failures)
         check_variant_count(page_model)
         structure_failures, _structure_results = run_structure_checks(
             ctx,
@@ -1295,6 +1331,13 @@ def run():
 
         with page_model.runtime.phase("variant_interaction"):
             variant_results, variant_failures = test_variants(ctx, page_model)
+        record_check_observation(
+            ctx,
+            "variant_selection",
+            "functional",
+            variant_failures,
+            capability="variant",
+        )
         failures.extend(variant_failures)
 
         sticky_results = {}

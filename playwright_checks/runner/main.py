@@ -4,8 +4,16 @@ import sys
 from playwright_checks.checks.collection_check import run as run_collection
 from playwright_checks.checks.home_check import run as run_home
 from playwright_checks.checks.product_check import run as run_product
-from playwright_checks.core.test_results import clear_results, drop_results, write_results
+from playwright_checks.core.test_results import (
+    clear_results,
+    drop_results,
+    get_results,
+    write_results,
+)
+from playwright_checks.core.config_loader import load_site_config
 from playwright_checks.core.viewport import get_run_viewport_names, set_current_viewport
+from playwright_checks.health.reporting import write_health_reports_fail_open
+from playwright_checks.health.shadow_runtime import run_shadow_pipeline_fail_open
 
 
 PAGE_ENV = "VISUAL_PAGE"
@@ -95,8 +103,51 @@ def run_all():
         for label, page_name, run_func in run_pages:
             failures.extend(run_page(label, page_name, run_func, viewport_name))
 
+    shadow = run_shadow_pipeline_fail_open(
+        get_results(),
+        load_site_config(),
+        viewport_names,
+        selected_page_ids=[page[1] for page in run_pages],
+        scheduler=os.environ.get("HEALTH_SCHEDULER", "MANUAL"),
+        scheduler_metadata={
+            "trigger": os.environ.get("HEALTH_TRIGGER", "MANUAL"),
+            "mode": os.environ.get("HEALTH_RUNTIME_MODE", "MONITOR"),
+        },
+        legacy_gate_failed=bool(failures),
+    )
+    if shadow.error:
+        print(
+            "WARN shadow executor unavailable; legacy gate remains unchanged: "
+            f"{shadow.error}"
+        )
+    elif shadow.enabled:
+        print(f"Shadow check results: {shadow.check_results_path}")
+        print(f"Shadow observations: {shadow.observations_path}")
+        print(f"Shadow comparison: {shadow.comparison_path}")
+        print(f"Shadow history summary: {shadow.history_summary_path}")
+        if shadow.history_error:
+            print(
+                "WARN shadow history unavailable; shadow execution and "
+                f"legacy gate remain unchanged: {shadow.history_error}"
+            )
+
     results_file = write_results()
     print(f"\nVisual test results: {results_file}")
+
+    health_paths = write_health_reports_fail_open(get_results())
+    if health_paths.get("error"):
+        print(
+            "WARN health report generation was unavailable; "
+            f"legacy results remain valid: {health_paths['error']}"
+        )
+    elif health_paths.get("json"):
+        print(f"Website health report: {health_paths['json']}")
+        if health_paths.get("html"):
+            print(f"Website health dashboard: {health_paths['html']}")
+        if health_paths.get("site_profile"):
+            print(f"Site profile: {health_paths['site_profile']}")
+        if health_paths.get("test_plan"):
+            print(f"Deterministic test plan: {health_paths['test_plan']}")
 
     if failures:
         print_failure_summary(failures)

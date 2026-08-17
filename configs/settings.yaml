@@ -196,3 +196,53 @@ runtime_health:
     - "sold out"
     - "your cart is empty"
   error_page_patterns: {}
+health_check:
+  enabled: true
+  report:
+    json: true
+    html: true
+    output_dir: reports
+  ai:
+    enabled: false
+    provider: none
+    max_findings: 20
+    max_evidence_per_finding: 8
+    self_healing:
+      suggestions_only: true
+      approval_required: true
+      auto_apply: false
+  false_positive_control:
+    minimum_critical_alert_evidence: HIGH
+    suppress_third_party_noise: true
+    suppress_expected_change: true
+    suppress_selector_change: true
+    recovered_retry_status: FLAKY
+    blocked_requires_repeated_confirmation: true
+  interaction_policy:
+    allowed_levels:
+      - SAFE
+    transactional_requires_explicit_opt_in: true
+    high_risk_allowed: false
+    capability_overrides: {}
+  shadow_executor:
+    enabled: false
+    timeout_ms: 10000
+    max_retries: 0
+    retry_delay_ms: 0
+    retry_on_timeout: true
+    retry_on_error: false
+    history:
+      enabled: true
+      root: history
+    maturity:
+      overall_coverage_percent: 80
+      critical_coverage_percent: 90
+      executable_coverage_percent: 80
+      result_parity_percent: 98
+      evidence_parity_percent: 95
+      max_policy_regressions: 0
+      max_executor_errors: 0
+      max_executor_timeouts: 0
+      required_consecutive_stable_runs: 10
+      require_result_parity_sample: true
+      require_evidence_parity_sample: true

@@ -42,7 +42,7 @@ def _env_bool(name):
 
 
 def is_ci_environment():
-    return _env_bool("CI") is True or bool(os.environ.get("JENKINS_URL"))
+    return _env_bool("CI") is True
 
 
 def _bool_setting(section, name, env_name, default):

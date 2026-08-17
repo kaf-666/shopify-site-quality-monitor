@@ -436,9 +436,11 @@ def _visual_strict_warnings():
     value = os.environ.get("VISUAL_STRICT_WARNINGS")
     if value is not None:
         return value.strip().lower() in ("1", "true", "yes", "on")
-    return (
-        os.environ.get("CI", "").strip().lower() in ("1", "true", "yes", "on")
-        or bool(os.environ.get("JENKINS_URL"))
+    return os.environ.get("CI", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
     )
 
 

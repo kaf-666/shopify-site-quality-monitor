@@ -54,6 +54,7 @@ Desktop.ini
 # Project-generated outputs
 reports/
 /artifacts/
+/history/
 driver/*.exe
 screenshots/**/current/
 screenshots/**/diff/
